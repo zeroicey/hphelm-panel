@@ -1,32 +1,54 @@
 # 交接：hphelm-panel（运维面板 + 自研锁屏）
 
-> **本轮状态**：① 功能已全部跑通并在真机验收（用户确认「整个流程我已经看到跑通了」）；
-> ② **UI 优化的第一刀已落地 = 消除「每秒闪一下」**（真机验收：`>30% 像素变化` 帧 4/40 → 0）；
-> 期间我自己引入过一次 **`XCopyArea` 的 `NoExpose` 自激空转**（CPU 0.8%→**33~49%**、面板 CPU% 跳成 KTV），
-> 同轮已根治（现 **0.60% of one core**）。
-> **第三轮（UI 重做）已落地**：按用户口径「不要卡片 / 更紧凑 / 进程榜重做」重写版面，
-> 并把 UI 拆成 `view.c`（基元）+ `view_panel.c`（面板）+ `view_login.c`（登录页）。
-> **下一轮目标**：等用户看真机后的观感反馈（第四节清单里剩下的项）。
-> 最后更新：2026-10-18（第四轮）。
+> **本轮状态（第五轮：立为独立项目）**：已从 `hphelm:~/projects/panel2` 整体搬到
+> **`hpcore:/data/dev/hphelm-panel`**（权威源码）并建成公开仓库 **`github.com/zeroicey/hphelm-panel`**；
+> 按「别人/另一个 AI 接手」的标准补齐材料：`AGENTS.md`（维护 AI 的工作指南）+
+> `docs/{architecture,design,verify,deploy,pitfalls}.md` + `tools/{measure.py,probe-frames,deploy.sh}`。
+>
+> **前四轮成果一句话**：功能跑通（状态机 桌面↔面板↔登录）→ 消闪（离屏 pixmap + 一次 XCopyArea）→
+> 修掉我自己引入的 `NoExpose` 自激空转（CPU 33~49% → **0.60%**）→ UI 重做成
+> **无卡片紧凑版式 + 进程榜 40 条分列**。
+>
+> **下一步**：用户看完真机观感后的反馈（第四节清单）。
+> 最后更新：2026-10-18（第五轮）。
+
+---
+
+## 零、先读 `AGENTS.md`
+
+如果你（人或 AI）是来**接手维护**这个项目的：**先读 [`AGENTS.md`](AGENTS.md)** —— 那里有
+三条红线、硬约束（性能预算/不许引工具包）、工作流、每轮必跑的验收判据、以及「不要做什么」。
+本文（HANDOFF）只记「逐轮做了什么 + 当前待办」。
 
 ---
 
 ## 一、30 秒上手
 
+**权威源码在 `hpcore:/data/dev/hphelm-panel`**（旧位置 `hphelm:~/projects/panel2` 保留为部署副本）：
+
 ```bash
-ssh hphelm
-cd ~/projects/panel2          # 源码（git 仓库，HEAD = f754cf1）
-make                          # 编译（需 pkg-config: x11 x11-xcb xscrnsaver cairo cairo-xlib pangocairo）
-sudo make install             # → /usr/local/bin/hphelm-panel + /usr/local/libexec/hphelm-auth(4755)
+cd /data/dev/hphelm-panel
+make                     # 需 pkg-config: x11 x11-xcb xscrnsaver cairo cairo-xlib pangocairo
+tools/deploy.sh --check  # 看部署会做什么（只读）
+tools/deploy.sh          # rsync → hphelm 上 make → install → 重启面板 → 跑判据
 ```
 
-**看效果需要重启进程**（`kill -USR2` 只切状态、**不会重载二进制**，上一版这里写错了）：
+**先在隔离环境看效果**（不要一上来动真屏）：
 
 ```bash
-make && sudo make install
+Xvfb :9 -screen 0 1920x1080x24 -ac &
+DISPLAY=:9 ./hphelm-panel --state panel --lock /tmp/xv9.lock   # ⚠️ --lock 必须换，否则和真机实例抢锁
+DISPLAY=:9 import -window $(DISPLAY=:9 xdotool search --name hphelm-panel | tail -1) /tmp/shot.png
+python3 tools/render-ascii.py /tmp/shot.png 22 22              # 看版式
+```
+
+**看效果需要重启进程**（`kill -USR2` 只切状态、**不会重载二进制**）：
+
+```bash
 pkill -x hphelm-panel        # 会话包装器的守护循环会在 ~1s 内用新二进制把它拉回来
-# ⚠️ 别用 `pkill -f`：它会匹配到执行它的那个 ssh shell 自己（已踩四次，见 README 坑 3）
+# ⚠️ 别用 `pkill -f`：它会匹配到执行它的那个 ssh shell 自己（已踩四次，见 docs/pitfalls.md）
 # ⚠️ 重启会让桌面露出 1~2 秒（面板 unmapped）；`rc=143` 不计失败，红线 2 安全
+# ⚠️ 在 Xvfb 里测时不要 `pkill -x`：会连真机实例一起杀（同名），请按 DISPLAY 挑 pid
 ```
 
 **先用隔离环境试**（不动真屏，推荐每次都先这么干）：
@@ -111,6 +133,27 @@ magick /tmp/p.png -crop ... ; # 见 README 的方法
 **编译零告警**（判据：按行取色块游程量几何）；
 ② 用「启动瞬间的采样值」预填曲线 ⇒ 那个值常是 0 / 偶尔是突发尖峰 ⇒ 曲线贴底或被假尖峰压扁真数据。
 
+## 三·六、第五轮做完的事：**立为独立项目（搬进 `/data/dev` + 建 GitHub 仓库 + 交接文档）**
+
+用户口径：「接下来把这个变成一个项目去维护：① 新建一个项目，新建 github 的仓库，然后推送上去。
+② 把该交接的文档都交接给专门负责这个项目的 AI…… 但肯定还是要体现我们系统（运维中心主机）的偏好。
+就是告诉外界，这是我的方案，并不是说你能直接拿过去就能用的。」
+
+| 项 | 做法 |
+| --- | --- |
+| **实体** | `hphelm:~/projects/panel2` → **`hpcore:/data/dev/hphelm-panel`**（开发域实体根；git bundle 搬全历史，非 squash） |
+| **仓库** | **`https://github.com/zeroicey/hphelm-panel`**（public、无 license，与其余 40 个仓库一致）；描述里就写明「不是通用产品」 |
+| **README** | 重写：公开定位 + 实测选型表 + **「这不是给谁用的」适配前提表**（屏幕/桌面栈/认证/会话入口/红线/字体/数据源/机队口径）+ 文档地图 + 状态与边界 |
+| **AGENTS.md** | **给专职维护 AI 的工作指南**：三条红线 · 硬约束（性能预算/不引工具包）· 工作流 · 每轮验收判据 · 设计系统要点 · 代码地图 · 不要做什么 · 交付纪律 · 环境速查 |
+| **docs/** | `architecture.md`（状态机/双缓冲/采样/认证/数据源）· `design.md`（无卡片+紧凑+坐标归 theme.h）· `verify.md`（**看不到图怎么验**）· `deploy.md`（部署/判据/回滚）· `pitfalls.md`（14 条坑，每条带判据） |
+| **tools/** | `measure.py`（量几何：色块游程/墨迹带/颜色 bbox）· `probe-frames`（帧差分判闪）· `deploy.sh`（部署 + 判据，`--check` 只读） |
+| **文档分工** | **代码知识归本仓库，机队事实归 kb**（`kb/runbooks/hphelm.md` 是机队视角的权威；本仓库只负责代码与设计） |
+
+⚠️ **「体现我们系统的偏好」是怎么落地的**：README 里那张适配表把 8 项前提（1920×1080/1.48 缩放、
+lightdm+bspwm+picom、专用 PAM 服务、会话包装器、三条运维红线、Nerd Font、k10temp/nvme 设备路径、机队看板口径）
+逐项列出来，并在开头用 TL;DR 写明 **“This is not a drop-in product.”**
+⇒ 外界能看懂「自绘、无工具包、低占用」这套**方法**可拿走，但「这份代码」要付适配成本。
+
 ## 四、已知粗糙点（下一轮的候选）
 
 **UI / 视觉**（第四轮已解决 1/2/3/7 的一部分：顶栏自己画了时间与状态、每核柱带轨道、
@@ -163,6 +206,8 @@ HPHELM_PANEL_DEBUG=1 ./hphelm-panel --state panel   # 主循环仪表：it/s · 
 ⇒ **测试实例与真机实例要能区分**：现在用 `--lock` 分开锁，杀的时候要挑 pid（按 `/proc/<pid>/environ` 里的 `DISPLAY` 认）。
 
 ## 五、诊断入口（下一轮排障直接用）
+
+> `AGENTS.md` 第 4 节是精简版验收清单；这里是与 hphelm 这台机器绑定的具体命令。
 
 ```bash
 # 状态机日志（每次变迁都有时间戳）

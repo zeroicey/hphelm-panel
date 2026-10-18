@@ -7,7 +7,7 @@ LDLIBS  += $(shell pkg-config --libs $(PKGS)) -lm
 
 BIN  = hphelm-panel
 AUTH = hphelm-auth
-OBJ  = src/panel.o src/metrics.o src/view.o src/view_draw.o src/auth.o
+OBJ  = src/panel.o src/metrics.o src/view.o src/view_panel.o src/view_login.o src/auth.o
 
 all: $(BIN) $(AUTH)
 

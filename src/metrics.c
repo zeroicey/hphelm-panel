@@ -243,15 +243,8 @@ static void read_ips(metrics_t *m) {
         struct sockaddr_in *sin = (struct sockaddr_in *)p->ifa_addr;
         inet_ntop(AF_INET, &sin->sin_addr, ip, sizeof ip);
         if (!strcmp(p->ifa_name, m->iface)) {
-            /* 只保留后两段：192.168.5.50 -> 5.50 */
-            char *last = strrchr(ip, '.');
-            if (last) {
-                char *prev = last;
-                while (prev > ip && *(prev - 1) != '.') prev--;
-                snprintf(m->ip, sizeof m->ip, "%s", prev);
-            } else {
-                snprintf(m->ip, sizeof m->ip, "%s", ip);
-            }
+            /* 用完整 IP（原来只留后两段 ⇒ 顶栏显示「5.6」这种看不出来是什么的东西） */
+            snprintf(m->ip, sizeof m->ip, "%s", ip);
             m->net_up = 1;
         } else if (!strncmp(p->ifa_name, "tailscale", 9)) {
             snprintf(m->ts_ip, sizeof m->ts_ip, "%s", ip);
@@ -274,7 +267,7 @@ static void read_procs(metrics_t *m) {
     if (!d) return;
     struct dirent *e;
     long pagesize = sysconf(_SC_PAGESIZE);
-    proc_row_t all[512];
+    static proc_row_t all[512]; /* static：别把 20KB 放栈上（这函数每秒都会被调） */
     int n = 0;
     m->nproc = 0;
     while ((e = readdir(d))) {

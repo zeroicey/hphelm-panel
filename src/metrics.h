@@ -6,7 +6,7 @@
 
 #define RING_CAP 300 /* 1 Hz × 5 分钟 */
 #define MAX_CORE 32
-#define TOPN 6
+#define TOPN 40      /* 进程榜条数（4 列 × 10 行；机器上实测约 200 个进程，扫描成本不变） */
 
 typedef struct {
     double v[RING_CAP];

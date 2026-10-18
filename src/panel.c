@@ -407,7 +407,23 @@ static void dbg_tick(void) {
         if (dbg_evtype[i])
             n += snprintf(buf + n, sizeof buf - (size_t)n, " %s=%ld",
                           i < (int)(sizeof tn / sizeof tn[0]) ? tn[i] : "?", dbg_evtype[i]);
-    logf_("%s · 签名 %.1fms 绘制 %.1fms 上屏 %.1fms", buf, dbg_ms_sig, dbg_ms_render, dbg_ms_blit);
+    {
+        /* 曲线健康度：NaN 会被 cairo 静默丢弃（整段不画），所以必须显式数出来 */
+        const struct { const char *n; const ring_t *r; } rings[] = {
+            {"cpu", &M.cpu_hist}, {"mem", &M.mem_hist}, {"rx", &M.rx_hist}, {"tx", &M.tx_hist}};
+        char rb[256];
+        int off = 0;
+        for (unsigned i = 0; i < sizeof rings / sizeof rings[0]; i++) {
+            int nan = 0;
+            for (int k = 0; k < rings[i].r->len; k++)
+                if (!(ring_at(rings[i].r, k) == ring_at(rings[i].r, k))) nan++;
+            off += snprintf(rb + off, sizeof rb - (size_t)off,
+                            " %s(len=%d max=%.1f nan=%d)", rings[i].n, rings[i].r->len,
+                            ring_max(rings[i].r, 0), nan);
+        }
+        logf_("rx_bps=%.1f tx_bps=%.1f · %s · 签名 %.1fms 绘制 %.1fms 上屏 %.1fms ·%s", M.rx_bps,
+              M.tx_bps, buf, dbg_ms_sig, dbg_ms_render, dbg_ms_blit, rb);
+    }
     dbg_ms_sig = dbg_ms_render = dbg_ms_blit = 0;
     t_last = t;
     dbg_iter = dbg_ev = dbg_poll_rd = dbg_poll_to = dbg_poll_oth = dbg_redraw = dbg_sample = 0;
@@ -460,6 +476,7 @@ int main(int argc, char **argv) {
                M.ncore, M.load[0], M.load[1], M.load[2], M.temp_c, M.governor, M.freq_mhz);
         printf("mem=%.0fM/%.0fM (%.0f%%) swap=%.0fM/%.0fM disk=%.0f%%\n", M.mem_used_mb,
                M.mem_total_mb, M.mem_pct, M.swap_used_mb, M.swap_total_mb, M.disk_used_pct);
+        printf("net_rate rx=%.1fB/s tx=%.1fB/s\n", M.rx_bps, M.tx_bps);
         printf("nproc=%d top:", M.nproc);
         for (int i = 0; i < M.ntop; i++) printf(" %s(%.0fM)", M.top[i].name, M.top[i].rss_mb);
         printf("\n");
@@ -515,6 +532,10 @@ int main(int argc, char **argv) {
         metrics_sample(&M, 0);
         usleep(120000);
     }
+    /* ⚠️ 不要「用当前值把曲线预填满」：那个值来自启动瞬间的采样窗口
+       （实测常是 0，偶尔是一个 120ms 的突发尖峰），于是曲线要么贴底、要么被假尖峰
+       把量程顶上去把真数据压扁 —— 等于伪造 5 分钟历史。改成诚实生长 + 零基线。
+       背景见 pitfalls/2026-10-18-*（本轮实测：rx/tx 的 [0]=0.0 而 [299]=131）。 */
 
     int tick = 0;
     for (;;) {

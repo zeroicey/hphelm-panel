@@ -14,6 +14,7 @@ static PangoFontDescription *mk(const char *s) { return pango_font_description_f
 
 void view_init(PangoLayout *lay) {
     g_lay = lay;
+    if (FD_TITLE) return;   /* 重建 cairo 上下文时会再调一次：字体描述符只建一次 */
     FD_TITLE = mk(F_TITLE);
     FD_LABEL = mk(F_LABEL);
     FD_VALUE = mk(F_VALUE);

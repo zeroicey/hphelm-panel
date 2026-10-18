@@ -20,6 +20,7 @@
  * 用法： hphelm-panel [--scale N] [--panel-idle S] [--login-back S]
  *                     [--input-grace S] [--sleep-off S] [--dump] [--once]
  *                     [--state desktop|panel|login]   （测试用：强制初始状态）
+ *                     [--lock PATH]                   （单实例锁路径，默认 /tmp/hphelm-panel.lock）
  */
 #define _GNU_SOURCE
 #include <X11/XKBlib.h>
@@ -66,6 +67,12 @@ static double CFG_LOGIN_BACK = 120;   /* 登录页空闲多久回面板 */
 static double CFG_INPUT_GRACE = 1.2;  /* 进面板后多久才接受“唤醒”（防误触） */
 static double CFG_SLEEP_OFF = 3600;   /* 面板空闲多久关屏 */
 static int FORCE_STATE = -1;
+static int DBG = 0;               /* HPHELM_PANEL_DEBUG=1：每秒打印主循环仪表 */
+static long dbg_iter, dbg_ev, dbg_poll_rd, dbg_poll_to, dbg_poll_oth, dbg_redraw, dbg_sample;
+static long dbg_evtype[64];
+static double dbg_ms_render, dbg_ms_blit, dbg_ms_sig;
+
+static const char *CFG_LOCK = "/tmp/hphelm-panel.lock";  /* 单实例锁（--lock 可换，便于 Xvfb 并行测试） */
 
 /* ---------------- X 状态 ---------------- */
 static Display *dpy;
@@ -76,6 +83,10 @@ static cairo_t *cr;
 static PangoLayout *lay;
 static metrics_t M;
 static int scr;
+static Pixmap back;                /* 离屏后备缓冲（X 服务器端 pixmap，双缓冲用） */
+static GC blitgc;                  /* 一次 XCopyArea 上屏用的 GC */
+static unsigned long long g_sig;   /* 上一帧内容签名（内容没变就不重绘） */
+static int g_sig_valid;
 
 /* ---------------- 运行状态 ---------------- */
 static int state = ST_DESKTOP;
@@ -125,6 +136,32 @@ static void logf_(const char *fmt, ...) {
     va_end(ap);
 }
 
+/* ---------------- 双缓冲（离屏后备 pixmap） ----------------
+ * ⚠️ 为什么不直接画到窗口：实测直接画窗口时，一帧里「清底 → 逐块绘制」的中间态
+ *    会被合成器（picom）与屏幕看到 ⇒ 每帧 63% 像素变化、每秒闪两次
+ *    （探针证据：能抓到「只有底色、没有盒子/文字」的半成品帧）。
+ *    现在所有绘制都进离屏 pixmap，最后用一次 XCopyArea 上屏
+ *    ⇒ 屏幕要么看到旧帧、要么看到新帧，没有中间态。
+ *    顺带把这块 pixmap 设为窗口背景 ⇒ 暴露/映射时由服务器自己填，不会闪黑。
+ */
+static void render(void);
+static void blit(void);
+static void redraw(void);
+static void redraw_force(void);
+
+static void surface_init(void) {
+    if (cr) { cairo_destroy(cr); cr = NULL; }
+    if (surf) { cairo_surface_destroy(surf); surf = NULL; }
+    if (back) { XFreePixmap(dpy, back); back = 0; }
+    back = XCreatePixmap(dpy, root, (unsigned)SW, (unsigned)SH,
+                         (unsigned)DefaultDepth(dpy, scr));
+    surf = cairo_xlib_surface_create(dpy, back, DefaultVisual(dpy, scr), SW, SH);
+    cr = cairo_create(surf);
+    lay = pango_cairo_create_layout(cr);
+    view_init(lay);
+    XSetWindowBackgroundPixmap(dpy, win, back);
+}
+
 /* ---------------- 窗口显隐 ---------------- */
 /* ⚠️ 键盘 grab 必须「显示时抓、隐藏时放」：
  *    只在启动时抓一次 ⇒ 回到 DESKTOP 后 grab 仍生效 ⇒ 桌面收不到任何按键（实测会踩）。
@@ -132,8 +169,12 @@ static void logf_(const char *fmt, ...) {
 static void win_raise(void) { XRaiseWindow(dpy, win); XFlush(dpy); }
 
 static void win_show(void) {
+    /* 先把这一帧画进后备缓冲，再映射 ⇒ 不会先露出空白/黑窗口 */
+    g_sig_valid = 0;
+    render();
     XMapRaised(dpy, win);
     XSync(dpy, False);
+    blit();
     XSetInputFocus(dpy, win, RevertToPointerRoot, CurrentTime);
     XGrabKeyboard(dpy, win, True, GrabModeAsync, GrabModeAsync, CurrentTime);
     XFlush(dpy);
@@ -178,7 +219,28 @@ static void dpms(int on) {
 }
 
 /* ---------------- 绘制 ---------------- */
-static void redraw(void) {
+/* 内容签名：只有它变了才重画（时钟每秒变 ⇒ 面板仍是 1Hz；
+   空闲无变化时不再白白重绘，省 CPU 也少一次上屏） */
+static unsigned long long content_sig(void) {
+    unsigned long long h = 1469598103934665603ULL; /* FNV-1a 64 */
+    const unsigned char *p = (const unsigned char *)&M;
+    for (size_t i = 0; i < sizeof M; i++) { h ^= p[i]; h *= 1099511628211ULL; }
+#define MIX(v) do { h ^= (unsigned long long)(v); h *= 1099511628211ULL; } while (0)
+    MIX(state);
+    MIX(pwlen);
+    MIX(busy);
+    MIX(cursor_on);
+    MIX(retry_at > 0 ? retry_at - (int)now_s() : 0);
+    for (const unsigned char *e = (const unsigned char *)g_err; *e; e++) {
+        h ^= *e;
+        h *= 1099511628211ULL;
+    }
+#undef MIX
+    return h;
+}
+
+/* 把当前状态画进离屏后备缓冲（不碰窗口） */
+static void render(void) {
     if (state == ST_DESKTOP) return;
     view_ctx_t v = {.scale = SCALE, .lw = SW / SCALE, .lh = SH / SCALE};
     cairo_save(cr);
@@ -191,8 +253,35 @@ static void redraw(void) {
         view_login_draw(cr, &v, &M, g_user, pwlen, g_err, busy, cursor_on, wait);
     }
     cairo_restore(cr);
+}
+
+/* 后备缓冲 → 窗口：整屏一次 XCopyArea（服务器端 blit，不上传像素） */
+static void blit(void) {
     cairo_surface_flush(surf);
+    XCopyArea(dpy, back, win, blitgc, 0, 0, (unsigned)SW, (unsigned)SH, 0, 0);
     XFlush(dpy);
+}
+
+static void redraw(void) {
+    if (state == ST_DESKTOP) return;
+    double t0 = now_s();
+    unsigned long long s = content_sig();
+    double t1 = now_s();
+    if (g_sig_valid && s == g_sig) return;
+    g_sig = s;
+    g_sig_valid = 1;
+    dbg_redraw++;
+    render();
+    double t2 = now_s();
+    blit();
+    double t3 = now_s();
+    dbg_ms_sig += (t1 - t0) * 1000; dbg_ms_render += (t2 - t1) * 1000; dbg_ms_blit += (t3 - t2) * 1000;
+}
+
+/* 内容没变也要重画（窗口暴露、尺寸变化、刚映射时用） */
+static void redraw_force(void) {
+    g_sig_valid = 0;
+    redraw();
 }
 
 /* ---------------- 认证 ---------------- */
@@ -294,6 +383,37 @@ static void on_button(void) {
     if (state == ST_LOGIN && screen_off) dpms(1);
 }
 
+/* ---------------- 主循环仪表（排障用） ---------------- */
+static void dbg_tick(void) {
+    if (!DBG) return;
+    static double t_last;
+    double t = now_s();
+    if (t_last == 0) { t_last = t; return; }
+    if (t - t_last < 1.0) return;
+    char buf[512];
+    int n = snprintf(buf, sizeof buf, "主循环 %.0f it/s · 事件 %ld · poll[可读 %ld/超时 %ld/其他 %ld] · "
+                     "重绘 %ld · 采样 %ld · 类型:", dbg_iter / (t - t_last), dbg_ev,
+                     dbg_poll_rd, dbg_poll_to, dbg_poll_oth, dbg_redraw, dbg_sample);
+    static const char *tn[] = {"?", "?", "KeyPress", "KeyRelease", "ButtonPress", "ButtonRelease",
+                               "MotionNotify", "EnterNotify", "LeaveNotify", "FocusIn", "FocusOut",
+                               "KeymapNotify", "Expose", "GraphicsExpose", "NoExpose",
+                               "VisibilityNotify", "CreateNotify", "DestroyNotify", "UnmapNotify",
+                               "MapNotify", "MapRequest", "ReparentNotify", "ConfigureNotify",
+                               "ConfigureRequest", "GravityNotify", "ResizeRequest",
+                               "CirculateNotify", "CirculateRequest", "PropertyNotify",
+                               "SelectionClear", "SelectionRequest", "SelectionNotify",
+                               "ColormapNotify", "ClientMessage", "MappingNotify", "GenericEvent"};
+    for (int i = 0; i < 64; i++)
+        if (dbg_evtype[i])
+            n += snprintf(buf + n, sizeof buf - (size_t)n, " %s=%ld",
+                          i < (int)(sizeof tn / sizeof tn[0]) ? tn[i] : "?", dbg_evtype[i]);
+    logf_("%s · 签名 %.1fms 绘制 %.1fms 上屏 %.1fms", buf, dbg_ms_sig, dbg_ms_render, dbg_ms_blit);
+    dbg_ms_sig = dbg_ms_render = dbg_ms_blit = 0;
+    t_last = t;
+    dbg_iter = dbg_ev = dbg_poll_rd = dbg_poll_to = dbg_poll_oth = dbg_redraw = dbg_sample = 0;
+    memset(dbg_evtype, 0, sizeof dbg_evtype);
+}
+
 /* ---------------- 主循环 ---------------- */
 int main(int argc, char **argv) {
     int once = 0, dump = 0;
@@ -305,6 +425,7 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--login-back") && i + 1 < argc) CFG_LOGIN_BACK = atof(argv[++i]);
         else if (!strcmp(argv[i], "--input-grace") && i + 1 < argc) CFG_INPUT_GRACE = atof(argv[++i]);
         else if (!strcmp(argv[i], "--sleep-off") && i + 1 < argc) CFG_SLEEP_OFF = atof(argv[++i]);
+        else if (!strcmp(argv[i], "--lock") && i + 1 < argc) CFG_LOCK = argv[++i];
         else if (!strcmp(argv[i], "--state") && i + 1 < argc) {
             if (!strcmp(argv[i + 1], "desktop")) FORCE_STATE = ST_DESKTOP;
             else if (!strcmp(argv[i + 1], "panel")) FORCE_STATE = ST_PANEL;
@@ -315,16 +436,16 @@ int main(int argc, char **argv) {
 
     /* 单实例锁：两个 hphelm-panel 会互相抢抬窗（都 override-redirect），
        屏幕会变成两张界面互相覆盖 —— 实测踩到（手工起一个 + 守护循环又起一个）。 */
-    int lockfd = open("/tmp/hphelm-panel.lock", O_CREAT | O_RDWR, 0644);
+    int lockfd = open(CFG_LOCK, O_CREAT | O_RDWR, 0644);
     if (lockfd >= 0 && flock(lockfd, LOCK_EX | LOCK_NB) != 0) {
-        fprintf(stderr, "hphelm-panel: 已有实例在运行（%s 被锁）⇒ 退出\n",
-                "/tmp/hphelm-panel.lock");
+        fprintf(stderr, "hphelm-panel: 已有实例在运行（%s 被锁）⇒ 退出\n", CFG_LOCK);
         return 3;
     }
 
     signal(SIGUSR1, on_sig); /* 立即锁屏（进登录页） */
     signal(SIGUSR2, on_sig); /* 立即回面板 */
     signal(SIGPIPE, SIG_IGN);
+    DBG = getenv("HPHELM_PANEL_DEBUG") != NULL;
     metrics_init(&M);
     auth_default_user(g_user, sizeof g_user);
 
@@ -372,10 +493,13 @@ int main(int argc, char **argv) {
     /* 窗口先不映射：映射/抓键盘/设焦点统一由 win_show() 做
        （对未映射窗口调 SetInputFocus 会 BadMatch 直接退出，实测 Major opcode 42） */
 
-    surf = cairo_xlib_surface_create(dpy, win, DefaultVisual(dpy, scr), SW, SH);
-    cr = cairo_create(surf);
-    lay = pango_cairo_create_layout(cr);
-    view_init(lay);
+    /* ⚠️ GC 必须关掉 graphics_exposures（默认 True）：
+       否则每次 XCopyArea 上屏都会回一个 NoExpose 事件 ⇒ poll 立刻返回
+       ⇒ 主循环自激空转（实测 35 it/s、CPU 3.3%，面板上的 CPU% 变成 KTV 乱跳）。 */
+    XGCValues gcv;
+    gcv.graphics_exposures = False;
+    blitgc = XCreateGC(dpy, win, GCGraphicsExposures, &gcv);
+    surface_init();   /* 建离屏后备 pixmap + cairo 上下文（不直接画窗口） */
 
     /* 初始状态 */
     state = (FORCE_STATE >= 0) ? FORCE_STATE : ST_DESKTOP;
@@ -398,19 +522,20 @@ int main(int argc, char **argv) {
         while (XPending(dpy)) {
             XEvent ev;
             XNextEvent(dpy, &ev);
+            if (DBG) { dbg_ev++; if (ev.type < 64) dbg_evtype[ev.type]++; }
             switch (ev.type) {
             case KeyPress: on_key(&ev.xkey); break;
             case MotionNotify: on_motion(); break;
             case ButtonPress: on_button(); break;
             case Expose:
-                if (state != ST_DESKTOP) redraw();
+                if (state != ST_DESKTOP) redraw_force();
                 break;
             case ConfigureNotify:
                 if (ev.xconfigure.width != SW || ev.xconfigure.height != SH) {
                     SW = ev.xconfigure.width;
                     SH = ev.xconfigure.height;
-                    cairo_xlib_surface_set_size(surf, SW, SH);
-                    if (state != ST_DESKTOP) redraw();
+                    surface_init();   /* 尺寸变了 ⇒ 重建后备缓冲 */
+                    if (state != ST_DESKTOP) redraw_force();
                 }
                 break;
             default: break;
@@ -428,8 +553,17 @@ int main(int argc, char **argv) {
             set_state(ST_PANEL);
         }
 
-        /* --- 采样 --- */
-        metrics_sample(&M, (tick % 5) == 0);
+        /* --- 采样：固定 0.5s 节流 ---
+           ⚠️ 不要「每轮循环采样一次」：循环速率一旦被事件带快，
+           采样窗口就变成几十毫秒 ⇒ CPU% 会跳成 KTV（实测）。 */
+        static double t_sample;
+        static int nsamp;
+        if (now_s() - t_sample >= 1.0) {
+            t_sample = now_s();
+            dbg_sample++;
+            metrics_sample(&M, (nsamp % 3) == 0);   /* 进程榜每 3s 一次（它最贵） */
+            nsamp++;
+        }
 
         /* --- 状态机 --- */
         double idle = x_idle();
@@ -473,12 +607,20 @@ int main(int argc, char **argv) {
             break;
         }
         tick++;
+        dbg_iter++;
+        dbg_tick();
         struct pollfd p = {ConnectionNumber(dpy), POLLIN, 0};
-        poll(&p, 1, state == ST_DESKTOP ? 1000 : 500);
+        int pr = poll(&p, 1, state == ST_DESKTOP ? 1000 : 500);
+        if (DBG) {
+            if (pr == 0) dbg_poll_to++;
+            else if (p.revents & POLLIN) dbg_poll_rd++;
+            else dbg_poll_oth++;
+        }
     }
 
     cairo_destroy(cr);
     cairo_surface_destroy(surf);
+    if (back) XFreePixmap(dpy, back);
     XCloseDisplay(dpy);
     return 0;
 }

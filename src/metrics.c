@@ -219,7 +219,7 @@ static void read_net(metrics_t *m, double dt) {
     if (!read_line(path, b, sizeof b)) return;
     tx = strtoull(b, NULL, 10);
 
-    if (!first && dt > 0) {
+    if (!first && dt > 0.05) {
         m->rx_bps = (double)(rx - p_rx) / dt;
         m->tx_bps = (double)(tx - p_tx) / dt;
     }
@@ -361,11 +361,20 @@ void metrics_init(metrics_t *m) {
     { cpustat_t cs; read_cpustat(&cs); (void)cs; }
 }
 
+static double mono_now(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (double)ts.tv_sec + ts.tv_nsec / 1e9;
+}
+
 void metrics_sample(metrics_t *m, int want_procs) {
-    static time_t last = 0;
+    /* ⚠️ dt 用单调时钟（亚秒）。原来用 time_t 的整秒差：采样快于 1Hz 时
+       dt 恒为 0 ⇒ 网络速率永远算不出来（实测踩到，当时是主循环空转 35Hz）。 */
+    static double last_mono;
+    double tnow = mono_now();
+    double dt = last_mono > 0 ? tnow - last_mono : 0;
+    last_mono = tnow;
     time_t now = time(NULL);
-    double dt = last ? difftime(now, last) : 0;
-    last = now;
     m->now = now;
     read_double("/proc/uptime", &m->uptime_s);
 
@@ -400,12 +409,15 @@ void metrics_sample(metrics_t *m, int want_procs) {
     read_mem(m);
     read_disk(m);
     /* ⚠️ getifaddrs 每次都开 netlink 转储全部地址，是这里最贵的一项；
-       IP 几乎不变 ⇒ 每 10 秒才刷一次。net_up 会保留上次的值。 */
-    static int n = 0;
-    if (n % 10 == 0) read_ips(m);
+       IP 几乎不变 ⇒ 每 10 秒才刷一次（按时间，不按调用次数：
+       否则循环一快就会狂刷）。net_up 会保留上次的值。 */
+    static double t_ips;
+    if (tnow - t_ips >= 10.0) {
+        t_ips = tnow;
+        read_ips(m);
+    }
     read_net(m, dt);
     if (want_procs) read_procs(m);
-    n++;
 
     ring_push(&m->cpu_hist, m->cpu_pct);
     ring_push(&m->mem_hist, m->mem_pct);

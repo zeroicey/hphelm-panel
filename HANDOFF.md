@@ -1,8 +1,11 @@
 # 交接：hphelm-panel（运维面板 + 自研锁屏）
 
-> **本轮状态**：功能已全部跑通并在真机验收（用户确认「整个流程我已经看到跑通了」）。
-> **下一轮目标**：UI 与细节优化（用户口径：「优化一下你的这个应用资源面板，UI 还有一些其他的地方」）。
-> 最后更新：2026-10-18。
+> **本轮状态**：① 功能已全部跑通并在真机验收（用户确认「整个流程我已经看到跑通了」）；
+> ② **UI 优化的第一刀已落地 = 消除「每秒闪一下」**（真机验收：`>30% 像素变化` 帧 4/40 → 0）；
+> 期间我自己引入过一次 **`XCopyArea` 的 `NoExpose` 自激空转**（CPU 0.83%→4.9%、面板 CPU% 跳成 KTV），
+> 同轮已根治（现 **0.08%**）。
+> **下一轮目标**：继续 UI 观感优化（第四节清单，**以用户实际观感为准**）。
+> 最后更新：2026-10-18（第二轮）。
 
 ---
 
@@ -15,8 +18,14 @@ make                          # 编译（需 pkg-config: x11 x11-xcb xscrnsaver 
 sudo make install             # → /usr/local/bin/hphelm-panel + /usr/local/libexec/hphelm-auth(4755)
 ```
 
-**看效果不需要重启**：面板已经常驻在跑，改动只要 `make && sudo make install` 然后
-`kill -USR2 $(pgrep -x hphelm-panel)`（回面板）就能看到新界面。
+**看效果需要重启进程**（`kill -USR2` 只切状态、**不会重载二进制**，上一版这里写错了）：
+
+```bash
+make && sudo make install
+pkill -x hphelm-panel        # 会话包装器的守护循环会在 ~1s 内用新二进制把它拉回来
+# ⚠️ 别用 `pkill -f`：它会匹配到执行它的那个 ssh shell 自己（已踩四次，见 README 坑 3）
+# ⚠️ 重启会让桌面露出 1~2 秒（面板 unmapped）；`rc=143` 不计失败，红线 2 安全
+```
 
 **先用隔离环境试**（不动真屏，推荐每次都先这么干）：
 
@@ -92,10 +101,36 @@ magick /tmp/p.png -crop ... ; # 见 README 的方法
    但实测未验证（需要等 1 小时）。可以调小 `--sleep-off` 测一次。
 10. **面板内容还没「服务概览」**：mockup 里的「26 容器全绿 / 磁盘 / 备份」还没做（需要探测 hpcore 的容器）。
 11. **多显示器未处理**：现在固定用 `DefaultScreen` 的整屏尺寸。
-12. **CPU 0.8%**：主要花在每秒约 50 段 pango 文字整形。两个杠杆：PangoLayout 缓存、区域局部重绘。
+12. ~~**CPU 0.8%**：主要花在每秒约 50 段 pango 文字整形。两个杠杆：PangoLayout 缓存、区域局部重绘。~~
+    **2026-10-18 重测：CPU 0.08%**（1 Hz 采样；绘制 ~3.5ms/帧、上屏 ~0.05ms、内容签名 ~0.05ms）
+    ⇒ 这一条优先级已降。真要再降就先看 `HPHELM_PANEL_DEBUG=1` 的耗时分布。
 13. **面板只在 :0 上**：换接口（DP-2→HDMI）后尺寸变化由 `ConfigureNotify` 处理，但没实测过。
 
 ---
+
+## 四·五、本轮（第二轮）做完的事：**消闪 + 消除自激空转**
+
+| # | 问题 | 根因 | 修法 | 判据 |
+| --- | --- | --- | --- | --- |
+| 1 | **面板每秒闪一下**（用户：「我这个屏幕现在会有一点闪……就是内存、网络、CPU 那个界面」） | 直接往窗口上画 = **没有双缓冲**：每帧先 `cairo_paint(C_BASE)` 清底、再逐块画，cairo 分批下发 ⇒ 中间态被 picom/屏幕看到 | 绘制全进**离屏 `Pixmap`**，每帧**一次 `XCopyArea`** 上屏；`XSetWindowBackgroundPixmap` 让服务器回填；`win_show()` 先画后映射；`ConfigureNotify` 重建 pixmap | 抓窗口连续帧差分：`>30% 像素变化` 帧 **4/40 → 0**；静止时 37/39 帧 `diffpx=0` |
+| 2 | **面板 CPU% 跳成 KTV**（用户：「哥们我 cpu 在唱 k 啊 疯狂跳」） | ⚠️ **我自己引入的**：`XCreateGC(dpy,win,0,NULL)` 的 `graphics_exposures` 默认 True ⇒ 每次 `XCopyArea` 回一个 `NoExpose` ⇒ `poll()` 立刻返回 ⇒ 主循环自激空转 35 it/s ⇒ 采样窗口被压到 ~28ms | `gcv.graphics_exposures=False` + `XCreateGC(..., GCGraphicsExposures, &gcv)`；**另加两道与循环速率解耦的保险**：采样按时间节流 1 Hz、`dt` 改单调时钟亚秒、IP/进程榜按时间刷新 | 仪表 `poll[可读 0/超时 2]`、事件 0、内容 1 次/秒、CPU **4.91% → 0.08%** |
+
+**新增的两个能力**（下一轮直接用）：
+
+```bash
+HPHELM_PANEL_DEBUG=1 ./hphelm-panel --state panel   # 主循环仪表：it/s · poll 结果 · 事件类型 · 重绘/采样 · 各阶段耗时
+./hphelm-panel --lock /tmp/x.lock ...               # 单实例锁可换 ⇒ Xvfb 测试不必杀真机实例
+```
+
+**本轮踩到的两条新坑（已归档 kb）**：
+
+- `pitfalls/2026-10-18-panel-flicker-direct-draw-no-double-buffer.md`
+- `pitfalls/2026-10-18-xcopyarea-noexpose-poll-self-sustaining-loop.md`
+
+⚠️ **本轮操作失误（记下来）**：我在 Xvfb 测试时用 `pkill -x hphelm-panel`，
+它把**真机上正在跑的那个实例也杀了**（同名进程）⇒ 用户屏幕上的面板重启了两次
+（守护循环按「运行时长」判定 ⇒ `fails` 没被误触发、greeter 也没被招回来，红线 2 生效）。
+⇒ **测试实例与真机实例要能区分**：现在用 `--lock` 分开锁，杀的时候要挑 pid（按 `/proc/<pid>/environ` 里的 `DISPLAY` 认）。
 
 ## 五、诊断入口（下一轮排障直接用）
 

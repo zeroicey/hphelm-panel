@@ -10,7 +10,7 @@
 set -eu
 
 HOST=${HPHELM_HOST:-hphelm}
-DEST=${HPHELM_SRC:-projects/panel2}
+DEST=${HPHELM_SRC:-"~/projects/panel2"}   # 远端相对 home
 CHECK=0
 [ "${1:-}" = "--check" ] && CHECK=1
 

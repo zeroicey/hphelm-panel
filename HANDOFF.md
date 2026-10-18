@@ -31,10 +31,10 @@ DISPLAY=:9 import -window "$(DISPLAY=:9 xdotool search --name hphelm-panel | tai
 **验证渲染（我看不到图，所以走像素判据）**：
 
 ```bash
-# 粗看布局（12x14 px 一格，亮度字符 + C=彩色）—— 脚本已在仓库里：tools/
-python3 tools/render-ascii.py /tmp/p.png | head -50
+# 粗看布局（12x14 px 一格，亮度字符 + C=彩色）
+python3 /tmp/ascii2.py /tmp/p.png | head -50      # 注意 /tmp 是易失的，见「四」
 # 细看区域（x0 y0 x1 y1 每格像素）
-python3 tools/render-region.py /tmp/p.png 700 560 1230 780 4
+python3 /tmp/fine.py /tmp/p.png 700 560 1230 780 4
 # 取某个颜色的 bbox（例如输入框底色 #313244）
 magick /tmp/p.png -crop ... ; # 见 README 的方法
 ```
@@ -129,9 +129,8 @@ sudo faillock --user oicey
 sudo grep -aE "autologin|Switching to greeter" /var/log/lightdm/lightdm.log | tail -3
 ```
 
-**渲染验证脚本已沉淀进仓库**：`tools/render-ascii.py`（整屏→ASCII）
-与 `tools/render-region.py`（局部放大）。这是本项目开发的基本功 ——
-**看不到图的时候，布局核对只能靠像素统计**，别凭想象改 UI。
+⚠️ **注意 `/tmp` 是易失的**：我用来验证渲染的 `ascii2.py` / `fine.py` 现在只在 hphelm 的 `/tmp` 里。
+下一轮如果要用，先确认还在；不在的话照「一」里的方法重写（各 ~20 行 python）。
 
 ---
 
@@ -149,9 +148,66 @@ sudo systemctl restart lightdm
 **整机级归档**：`/data/backups/hphelm-panel-20261018/`
 （`panel2.bundle` 完整 git 历史 + 四处系统配置 + `RESTORE.md` 恢复清单）
 
+⚠️ 回滚时**也要停掉 VT 守卫**，否则它会一直把 VT 往 tty7 拽：
+`sudo systemctl disable --now hphelm-vt-guard.service`
+
 ---
 
-## 七、下一轮开工前请先读
+---
+
+## 八、⛔ 两条红线（下一轮务必先读，我在这一轮**踩了两次**，都是让用户看到本该消失的旧登录页）
+
+### 红线 1：永远不要给 lightdm 发锁请求
+
+面板是全屏覆盖层，**只在活跃 VT 上可见**。只要有人把锁请求发给 lightdm
+（`dm-tool lock` / `light-locker` / autologin 失败），lightdm 就会**起 greeter 并把 VT 切到 tty8**
+⇒ 用户看到 DM 的旧登录页，我们的面板被藏在后面。
+
+⇒ **`hphelm-session` 里永远不出现 `dm-tool`；守护循环的兜底只允许 `xset dpms force off` + 记日志。**
+
+### 红线 2：守护循环只把「运行 <5 秒即退出」当失败
+
+`pkill` 的默认信号是 SIGTERM ⇒ 退出码 **143**。用「非 0 即失败」判定的话，
+**每次调试重启都会给失败计数 +1**，攒到 3 次就会触发兜底 —— 我这次就是这么把 greeter 招回来的。
+**判据用运行时长，不要用退出码。**
+
+### 独立防线：VT 守卫（2026-10-18 新增）
+
+| 项 | 值 |
+| --- | --- |
+| 脚本 | `/usr/local/sbin/hphelm-vt-guard` |
+| 单元 | `/etc/systemd/system/hphelm-vt-guard.service`（enabled，常驻 ~1.2 MiB） |
+| 动作 | **活跃 VT ≥ 8 且 `slick-greeter` 在跑 且 `bspwm` 在跑 ⇒ `chvt 7`** |
+| 边界为何这么窄 | 为了**不干扰 `Ctrl+Alt+F2` 进救援 TTY**（tty2~tty6 永不介入） |
+
+**它的实测判据**：
+
+```sh
+sudo chvt 2; sleep 3; cat /sys/class/tty/tty0/active   # 应仍是 tty2（守卫不动它）
+sudo chvt 7
+dm-tool lock; sleep 3; cat /sys/class/tty/tty0/active  # 应已回到 tty7
+journalctl -t hphelm-vt-guard -n 3                     # 应看到「抢到 tty8 ⇒ 切回 tty7」
+```
+
+（实测：模拟 `dm-tool lock` 后 **3 秒内 VT 已回 tty7**。）
+
+### 另外两个同类自伤（都已修）
+
+- **日志按大小轮转**：包装器在会话启动前检查 `/tmp/hphelm-panel.log` > 1 MiB 就 `tail -c 256K`。
+  （背景：我用 `rm -f /tmp/*.log` 清理时**把面板正在写的日志也删了** —— 进程仍持 fd，
+  继续往已删除 inode 写，日志从此不可见且空间不释放。**删正在写的日志不报错，只会让日志「看起来空了」**。）
+- **`xset dpms 0 0 0`**：DPMS 定时关屏交给面板自己管（它才是「空闲显示」的唯一负责人），
+  否则 X 会在 11 分钟把面板涂黑。
+
+### 相关坑档（kb）
+
+- `2026-10-18-guard-fallback-self-inflicted-traps.md` ← **本轮最重要的教训**
+- `2026-10-18-lockscreen-auth-reusing-login-pam-stack-locks-out-autologin.md`
+- `2026-10-18-fullscreen-override-redirect-overlay-traps.md`
+
+---
+
+## 九、下一轮开工前请先读
 
 - `hphelm:~/projects/panel2/README.md`（本项目自述：行为、选型实测表、安全模型、6 个坑）
 - kb `runbooks/hphelm.md` 的「运维面板（hphelm-panel）」节（机队视角 + 验收判据）

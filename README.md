@@ -122,7 +122,7 @@ hphelm-panel --dump               # 只打采集层数据后退出（不需要 X
    判据：`magick <png> -crop <w>x1+<x>+<y> txt:-` 取一行色块游程，量实际几何 —— 比看图靠谱。
 9. ⭐ **`XCopyArea` 用的 GC 必须关掉 `graphics_exposures`。**
    默认 `True` ⇒ 每次上屏回一个 `NoExpose` ⇒ `poll()` 立刻返回 ⇒ **主循环自激空转**：
-   实测 35 it/s、CPU 0.83%→4.9%、采样窗口被压到 ~28ms ⇒ 面板上 CPU% 跳成 KTV；
+   实测 35 it/s、CPU 0.8%→33~49%、采样窗口被压到 ~28ms ⇒ 面板上 CPU% 跳成 KTV；
    连带 `getifaddrs` 变成每 0.3s 一次、网络速率因 `difftime` 恒 0 永远算不出来。
    修法：`gcv.graphics_exposures = False; XCreateGC(dpy, win, GCGraphicsExposures, &gcv);`
 10. ⭐ **不要用启动瞬间的采样值预填曲线**（等于伪造历史，且量程会被突发尖峰顶上去）——
@@ -154,7 +154,7 @@ hphelm-panel --dump               # 只打采集层数据后退出（不需要 X
 - 条数 **40**（`TOPN`，4 列 × 10 行，逐列向下填、按 RSS 降序）；机器实测约 220 个进程，
   `read_procs` 本来就会遍历 `/proc` 后 `qsort`，**取前 6 还是前 40 的扫描成本一样**。
 - 刷新 **每 3 秒**（采样 1 Hz，`nsamp % 3`）；`read_procs` 是面板里最贵的一项（遍历 `/proc`），
-  实测 3 秒一刷对 CPU 无可测影响（整机 0.09%）。
+  实测 3 秒一刷对 CPU 无可测影响（整机 **0.60% of one core**，20s 内 utime+stime = 120ms）。
 - 每行 `名次 · 进程名 · pid · 内存`，内存右对齐到本列右边界；口径明确标注 **RSS**（与 htop 一致）。
 
 **曲线（sparkline）**：
@@ -198,5 +198,5 @@ HPHELM_PANEL_DEBUG=1 ./hphelm-panel --state panel     # 每秒一行
 - ⬜ 面板内容补齐：服务概览、进程榜可选按 CPU 排序
 - ⬜ UI 观感优化（候选见 `HANDOFF.md` 第四节：顶部 48px 空白、每核小柱、sparkline 自动缩放导致的
   视觉跳动、进程榜内存口径、登录页卡片位置、面板平涂 vs 登录页渐变、认证中缺进度反馈…）
-- ⬜ ~~PangoLayout 缓存 / 区域局部重绘（降 CPU）~~ —— 优先级已降：实测 CPU 仅 **0.08%**
+- ⬜ ~~PangoLayout 缓存 / 区域局部重绘（降 CPU）~~ —— 优先级已降：实测 CPU **0.60% of one core**
   （绘制 ~3.5ms/帧、上屏 ~0.05ms、签名 ~0.05ms）

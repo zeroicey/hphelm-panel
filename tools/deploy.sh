@@ -10,7 +10,7 @@
 set -eu
 
 HOST=${HPHELM_HOST:-hphelm}
-DEST=${HPHELM_SRC:-"~/projects/panel2"}   # 远端相对 home
+DEST=${HPHELM_SRC:-projects/panel2}   # 相对远端 $HOME
 CHECK=0
 [ "${1:-}" = "--check" ] && CHECK=1
 
@@ -23,7 +23,7 @@ say "1/4 同步源码"
 run "rsync -az --delete \
   --exclude '.git/' --exclude '*.o' --exclude 'hphelm-panel' --exclude 'hphelm-auth' \
   --exclude 'assets/' --exclude '*.bundle' --exclude '.venv/' \
-  '$REPO/' '$HOST:$DEST/'"
+  '$REPO/' '$HOST:~/$DEST/'"
 
 say "2/4 构建 + 安装（make && sudo make install）"
 run "ssh '$HOST' 'cd ~/$DEST && make 2>&1 | tail -5 && sudo make install 2>&1 | tail -2'"

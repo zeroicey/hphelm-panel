@@ -30,6 +30,9 @@
 #include <cairo/cairo-xlib.h>
 #include <cairo/cairo.h>
 #include <errno.h>
+#include <fcntl.h>
+#include <signal.h>
+#include <sys/file.h>
 #include <math.h>
 #include <pango/pangocairo.h>
 #include <poll.h>
@@ -83,8 +86,16 @@ static int pwlen = 0;
 static char g_err[128];
 static int busy = 0;
 static int retry_at = 0;      /* 失败冷却结束的时刻（monotonic） */
+static int fail_count = 0;    /* 连续失败次数（用于指数退避） */
 static int screen_off = 0;
 static int cursor_on = 1;
+
+static volatile sig_atomic_t g_sig_lock = 0;
+static volatile sig_atomic_t g_sig_panel = 0;
+static void on_sig(int sig) {
+    if (sig == SIGUSR1) g_sig_lock = 1;
+    else if (sig == SIGUSR2) g_sig_panel = 1;
+}
 
 static double now_s(void) {
     struct timespec ts;
@@ -118,6 +129,8 @@ static void logf_(const char *fmt, ...) {
 /* ⚠️ 键盘 grab 必须「显示时抓、隐藏时放」：
  *    只在启动时抓一次 ⇒ 回到 DESKTOP 后 grab 仍生效 ⇒ 桌面收不到任何按键（实测会踩）。
  *    隐藏时还要把焦点还给 root，否则焦点留在一个未映射窗口上。 */
+static void win_raise(void) { XRaiseWindow(dpy, win); XFlush(dpy); }
+
 static void win_show(void) {
     XMapRaised(dpy, win);
     XSync(dpy, False);
@@ -196,6 +209,7 @@ static void try_auth(void) {
         logf_("认证成功 ⇒ 回桌面");
         pwlen = 0;
         pw[0] = 0;
+        fail_count = 0;
         set_state(ST_DESKTOP);
         /* 把 idle 归零：刚解锁不该马上又进面板 */
         XResetScreenSaver(dpy);
@@ -203,9 +217,12 @@ static void try_auth(void) {
     } else {
         pwlen = 0;
         pw[0] = 0;
-        retry_at = (int)now_s() + 2;
+        fail_count++;
+        int wait = 2 << (fail_count > 4 ? 4 : fail_count - 1); /* 2,4,8,16,32 秒 */
+        if (wait > 32) wait = 32;
+        retry_at = (int)now_s() + wait;
         snprintf(g_err, sizeof g_err, "%s", r < 0 ? "无法启动认证助手" : "密码错误");
-        logf_("认证失败（r=%d）", r);
+        logf_("认证失败（第 %d 次，冷却 %d 秒）", fail_count, wait);
         redraw();
     }
 }
@@ -296,6 +313,18 @@ int main(int argc, char **argv) {
         }
     }
 
+    /* 单实例锁：两个 hphelm-panel 会互相抢抬窗（都 override-redirect），
+       屏幕会变成两张界面互相覆盖 —— 实测踩到（手工起一个 + 守护循环又起一个）。 */
+    int lockfd = open("/tmp/hphelm-panel.lock", O_CREAT | O_RDWR, 0644);
+    if (lockfd >= 0 && flock(lockfd, LOCK_EX | LOCK_NB) != 0) {
+        fprintf(stderr, "hphelm-panel: 已有实例在运行（%s 被锁）⇒ 退出\n",
+                "/tmp/hphelm-panel.lock");
+        return 3;
+    }
+
+    signal(SIGUSR1, on_sig); /* 立即锁屏（进登录页） */
+    signal(SIGUSR2, on_sig); /* 立即回面板 */
+    signal(SIGPIPE, SIG_IGN);
     metrics_init(&M);
     auth_default_user(g_user, sizeof g_user);
 
@@ -388,6 +417,17 @@ int main(int argc, char **argv) {
             }
         }
 
+        /* --- 信号触发的状态跳转 --- */
+        if (g_sig_lock) {
+            g_sig_lock = 0;
+            if (state == ST_DESKTOP) set_state(ST_LOGIN);
+            else if (state == ST_PANEL) set_state(ST_LOGIN);
+        }
+        if (g_sig_panel) {
+            g_sig_panel = 0;
+            set_state(ST_PANEL);
+        }
+
         /* --- 采样 --- */
         metrics_sample(&M, (tick % 5) == 0);
 
@@ -424,6 +464,9 @@ int main(int argc, char **argv) {
                 redraw(); /* 时钟/等待秒数 */
             }
         }
+
+        /* --- 抬窗：polybar 等 override-redirect 窗口比面板晚映射时会压在上面（实测） --- */
+        if (state != ST_DESKTOP && (tick % 2) == 0) win_raise();
 
         if (once) {
             redraw();

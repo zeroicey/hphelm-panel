@@ -82,7 +82,7 @@ int main(int argc, char **argv) {
     struct pam_conv pc = {.conv = conv, .appdata_ptr = &ctx};
     pam_handle_t *pamh = NULL;
 
-    int rc = pam_start("login", want, &pc, &pamh);
+    int rc = pam_start("hphelm-auth", want, &pc, &pamh);
     if (rc != PAM_SUCCESS) {
         printf("FAIL pam_start: %s\n", pam_strerror(pamh, rc));
         explicit_bzero(pw, sizeof pw);

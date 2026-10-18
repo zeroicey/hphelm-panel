@@ -84,6 +84,10 @@ sudo make install    # → /usr/local/bin/hphelm-panel
                      # → /usr/local/libexec/hphelm-auth（4755 root:root，setuid）
 ```
 
+⚠️ **在 `hpcore`（本项目的源码宿主）上 make 会失败**：那台是无头服务器，没装 X 开发头文件。
+**编译与安装都在目标机 `hphelm` 上做** —— 这正是 `tools/deploy.sh` 负责的事（rsync → 远端 `make`）。
+在 hpcore 上能做的只有：读代码、改代码、跑 `tools/` 里的分析脚本（它们只依赖 python3 + ImageMagick）。
+
 部署到 `hphelm` 的完整流程（含红线守卫、回滚）见 **[`docs/deploy.md`](docs/deploy.md)**；
 一条命令的版本是 `tools/deploy.sh`。
 

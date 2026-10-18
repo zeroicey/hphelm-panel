@@ -1,0 +1,127 @@
+#!/bin/sh
+# probe-frames —— 抓面板窗口的连续帧，逐像素比对相邻帧
+#
+# 用途：判「有没有闪」与「内容变化率」。
+#   闪的指纹：单帧 >30% 像素变化 + 连续两帧都变 + 中间帧 PNG 明显更小。
+#   健康：静止时绝大多数帧 diffpx=0，每秒 1 次内容更新。
+#
+# 用法：DISPLAY=:0 tools/probe-frames [帧数] [间隔毫秒] [--save 前缀]
+#   默认 60 帧 / 30ms；--save 会把每帧存成 PNG（用于看中间态）
+set -eu
+
+N=${1:-60}
+GAP_MS=${2:-30}
+PREFIX=""
+
+# 参数里可能带 --save 前缀
+for a in "$@"; do
+    case "$a" in
+    --save) PREFIX="__NEXT__" ;;
+    *) if [ "$PREFIX" = "__NEXT__" ]; then PREFIX=$a; fi ;;
+    esac
+done
+[ "$PREFIX" = "__NEXT__" ] && PREFIX=""
+
+TMP=$(mktemp -d)
+trap 'rm -rf "$TMP"' EXIT
+
+cat >"$TMP/probe.c" <<'EOF'
+/* 抓 hphelm-panel 窗口连续帧，报告相邻帧差异（有没有「半成品帧」） */
+#define _GNU_SOURCE
+#include <X11/Xlib.h>
+#include <X11/Xutil.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+#include <unistd.h>
+
+static double now_s(void) {
+    struct timespec t;
+    clock_gettime(CLOCK_MONOTONIC, &t);
+    return (double)t.tv_sec + t.tv_nsec / 1e9;
+}
+
+int main(int argc, char **argv) {
+    int n = argc > 1 ? atoi(argv[1]) : 60;
+    int gap_ms = argc > 2 ? atoi(argv[2]) : 30;
+    const char *prefix = argc > 3 ? argv[3] : "";
+    Display *d = XOpenDisplay(NULL);
+    if (!d) { fprintf(stderr, "cannot open display\n"); return 1; }
+    Window root = DefaultRootWindow(d), r, p, *ch, w = 0;
+    unsigned nc;
+    XQueryTree(d, root, &r, &p, &ch, &nc);
+    for (unsigned i = 0; i < nc; i++) {
+        char *nm = 0;
+        if (XFetchName(d, ch[i], &nm) && nm) {
+            if (!strcmp(nm, "hphelm-panel")) w = ch[i];
+            XFree(nm);
+        }
+    }
+    if (ch) XFree(ch);
+    if (!w) { fprintf(stderr, "hphelm-panel window not found\n"); return 1; }
+    XWindowAttributes a;
+    XGetWindowAttributes(d, w, &a);
+    int W = a.width, H = a.height;
+    printf("window 0x%lx %dx%d\n", w, W, H);
+    unsigned char *prev = calloc((size_t)W * H * 4, 1), *cur = malloc((size_t)W * H * 4);
+    double t_prev = 0;
+    int torn = 0;
+    for (int k = 0; k < n; k++) {
+        double t0 = now_s();
+        XImage *im = XGetImage(d, w, 0, 0, W, H, AllPlanes, ZPixmap);
+        if (!im) { fprintf(stderr, "XGetImage failed\n"); break; }
+        memcpy(cur, im->data, (size_t)W * H * 4);
+        XDestroyImage(im);
+        long nd = 0;
+        int x0 = W, y0 = H, x1 = 0, y1 = 0;
+        if (k) {
+            for (int y = 0; y < H; y++) {
+                unsigned *pr = (unsigned *)(prev + (size_t)y * W * 4);
+                unsigned *cu = (unsigned *)(cur + (size_t)y * W * 4);
+                for (int x = 0; x < W; x++)
+                    if (pr[x] != cu[x]) {
+                        nd++;
+                        if (x < x0) x0 = x;
+                        if (x > x1) x1 = x;
+                        if (y < y0) y0 = y;
+                        if (y > y1) y1 = y;
+                    }
+            }
+            printf("frame %2d t=%8.3f dt=%5.3f diffpx=%8ld (%5.2f%%) bbox=(%d,%d)-(%d,%d)\n",
+                   k, t0, t_prev ? t0 - t_prev : 0.0, nd, 100.0 * nd / ((double)W * H),
+                   nd ? x0 : 0, nd ? y0 : 0, nd ? x1 : 0, nd ? y1 : 0);
+            if (nd > (long)W * H * 0.30) torn++;
+        } else {
+            printf("frame  0 t=%8.3f (baseline)\n", t0);
+        }
+        if (prefix && prefix[0]) {
+            char fn[512];
+            snprintf(fn, sizeof fn, "%s%03d.ppm", prefix, k);
+            FILE *f = fopen(fn, "wb");
+            if (f) {
+                fprintf(f, "P6\n%d %d\n255\n", W, H);
+                for (int y = 0; y < H; y++)
+                    for (int x = 0; x < W; x++) {
+                        unsigned px = ((unsigned *)(cur + (size_t)y * W * 4))[x];
+                        unsigned char rgb[3] = {(px >> 16) & 0xff, (px >> 8) & 0xff, px & 0xff};
+                        fwrite(rgb, 1, 3, f);
+                    }
+                fclose(f);
+            }
+        }
+        memcpy(prev, cur, (size_t)W * H * 4);
+        t_prev = t0;
+        usleep((useconds_t)gap_ms * 1000);
+    }
+    printf("---- frames with >30%% pixels changed: %d\n", torn);
+    XCloseDisplay(d);
+    return 0;
+}
+EOF
+
+cc -O2 -o "$TMP/probe" "$TMP/probe.c" -lX11 || {
+    echo "编译探针失败：需要 libX11 开发包" >&2
+    exit 1
+}
+exec "$TMP/probe" "$N" "$GAP_MS" "$PREFIX"

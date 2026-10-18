@@ -1,0 +1,119 @@
+# 已踩的坑（14 条，每条带判据）
+
+> 这个项目最贵的资产是这张表 —— 每一条都是**真机实测**踩出来的，而且大部分**不报错、不崩溃**。
+> 改代码前扫一眼；踩到新坑请追加（带判据），并在 `HANDOFF.md` 记一行。
+> 机队视角的同类记录在 `kb`（hpcore）：`pitfalls/2026-10-18-*.md` 若干篇。
+
+---
+
+## A. 渲染与 X11
+
+### 1. 不要直接往可见窗口上画（没有双缓冲就会每秒闪一下）
+
+`cairo_xlib_surface_create(dpy, win, …)` 直接画窗口时，每帧「先 `cairo_paint` 清底 → 再逐块画」
+的中间态会被 picom/屏幕看到。
+**判据**：抓窗口连续帧差分 ⇒ 单帧 >30% 像素变化、连续两帧都变、中间帧 PNG 明显更小（只有底色）。
+**正解**：绘制全进离屏 `Pixmap`，每帧**一次 `XCopyArea`** 上屏；窗口背景 = 那块 pixmap。
+
+### 2. `XCopyArea` 的 GC 必须关掉 `graphics_exposures`
+
+默认 `True` ⇒ 每次上屏回一个 `NoExpose` ⇒ `poll()` 立刻返回 ⇒ **主循环自激空转**：
+实测 35 it/s、CPU **0.8% → 33~49%**、采样窗口被压到 ~28ms ⇒ 面板上 CPU% 跳成 KTV；
+连带 `getifaddrs` 变成每 0.3s 一次、网络速率因 `difftime` 恒 0 永远算不出来。
+**判据**：仪表里 `poll[可读 N/超时 0]` 且事件类型全是 `NoExpose`。
+**正解**：`gcv.graphics_exposures = False; XCreateGC(dpy, win, GCGraphicsExposures, &gcv);`
+
+### 3. 对**未映射**窗口 `XSetInputFocus` 会 `BadMatch` 并直接终止进程
+
+`Major opcode 42`。**正解**：`XMapRaised` → `XSync` → 再设焦点/抓键。
+（`win_show()` 现在的顺序就是为此定的：先 `render()` → `XMapRaised` → `XSync` → `blit()` → 焦点 → grab。）
+
+### 4. `XGrabKeyboard` 只在显示时抓、隐藏时必须放
+
+第一版只在启动抓了一次 ⇒ **回桌面后整个桌面收不到任何按键**。
+**判据**：隐藏后另起进程 `XGrabKeyboard` 应返回 `GrabSuccess`（面板显示时应为 `AlreadyGrabbed`）。
+
+### 5. `override-redirect` 窗口的堆叠 = 映射顺序，WM 不仲裁
+
+会话包装器里 `(sleep 2; exec polybar)` 比面板晚映射 ⇒ polybar 压在面板上。
+**正解**：锁定态每 2 tick `XRaiseWindow`。
+⚠️ 查堆叠顺序时两个工具**方向相反**：`XQueryTree` 是 bottom→top、`xwininfo -root -children` 是 top→bottom。
+**别背方向，用「裁顶部 48px 看谁有墨迹」这个与顺序无关的判据。**
+
+### 6. 两个实例会互相抢抬窗
+
+屏幕变成两张界面互盖，而**日志一切正常**。
+**正解**：`flock /tmp/hphelm-panel.lock` 单实例锁（`--lock` 可换路径）；包装器遇 `rc=3` 要 `sleep 30`。
+
+### 7. `const double w[3] = {a, b, 0}` 会静默产生「零宽度栏」
+
+修「const 数组不能赋值」时顺手把第三栏写成 `0` ⇒ 该栏宽度 = 0 ⇒ sparkline 的 300 个采样点
+全叠在同一个 x 上（画成一根竖线）、右对齐文字挤到左边缘，而**编译零告警、程序不崩**。
+**判据**：按行取色块游程量实际几何（`tools/measure.py --runs`）。
+
+---
+
+## B. 数据与显示
+
+### 8. 不要用「启动瞬间的采样值」预填曲线
+
+为治「曲线起步为空」而 `ring_prefill(ring, 当前值)` ⇒ 那个值来自启动时 120ms 的窗口，
+实测常是 **0**、偶尔是**突发尖峰**（实测预填 ~530B/s 而真实只有 ~130B/s）⇒
+曲线要么贴底、要么被假尖峰把量程顶上去把真数据压扁。**这是伪造历史。**
+**正解**：不预填；空态用**零基线** + 曲线从右侧诚实生长；真要铺满就缩短窗口。
+
+### 9. 曲线量程必须稳定，否则整条曲线会「整体跳」
+
+按「历史最大值」线性缩放时，最大值一变整条曲线就上下弹一下（用户看成「在抖」）。
+**正解**：`v_nice_ceil()` 吸附到 1/2/5×10ⁿ；CPU/内存固定 0~100。
+
+### 10. 采样必须按**时间**节流，速率必须用**单调时钟**
+
+- 「每轮循环采样一次」⇒ 循环一被事件带快，采样窗口就变成几十毫秒 ⇒ CPU% 变成噪声。
+- 用 `time_t` 的整秒差算速率 ⇒ 采样快于 1 Hz 时 `difftime` 恒为 0 ⇒ 速率永远算不出来。
+**正解**：`if (now_s() - t_sample >= 1.0)` + `CLOCK_MONOTONIC` 亚秒 dt。
+
+### 11. 默认网卡不能靠 `readdir(/sys/class/net)` 的顺序
+
+实测先返回没接线的 `wlp1s0` ⇒ IP 空、面板一片 down。**判据是「有全局 IPv4」。**
+
+### 12. 性能细节三则
+
+- 别「每核打开一次 `/proc/stat`」——单次遍历拿汇总 + 所有核。
+- 进程榜只读一次 `/proc/<pid>/stat`（`(comm)` 与 rss 都在里面）。
+- `getifaddrs` 最贵（netlink 全量转储）⇒ IP 每 10 秒刷一次；`read_procs` 的 `all[512]` 放 `static`。
+
+---
+
+## C. 运维与自伤（**这部分最危险**）
+
+### 13. 认证绝不能复用 `login` PAM 栈
+
+`login → system-local-login → system-auth` 带 `pam_faillock`；而 `lightdm-autologin` 第一行也是
+`pam_faillock.so preauth` ⇒ 锁屏上输错 3 次把账号锁上 ⇒ **连坐 autologin 失败** ⇒
+lightdm 退回 greeter 并把 VT 切到 tty8 ⇒ 自研面板被藏在后面（用户看到旧登录页）。
+**正解**：专用 `/etc/pam.d/hphelm-auth`（只留 `pam_unix`）；防爆破由面板自己做指数退避。
+**判据**：`tty0/active` = 会话那个 VT + `pgrep -c slick-greeter` = 0。
+
+### 14. 守护/兜底逻辑的三个自伤（**一天内让用户两次看到不该出现的旧登录页**）
+
+① 把「我主动 SIGTERM 重启」计成失败（`pkill` ⇒ rc=143），攒到 3 次触发兜底；
+② 兜底选了 `dm-tool lock` ⇒ lightdm 起 greeter 并切 VT ⇒ 面板被藏起来；
+③ 批量清理 `rm /tmp/*.log` 命中运行中程序正在写的日志（不报错，只是日志从此不可见）。
+
+**正解**：
+- 守护循环**只把「运行 <5 秒即退出」当失败**（判据用运行时长，不用退出码）；
+- 兜底**只关屏 + 大声记日志，绝不把控制权交给 DM**；
+- 日志按大小轮转（`tail -c` 再 `mv`），**不要 `rm`**；
+- 独立防线 `hphelm-vt-guard`（活跃 VT≥8 且 greeter 在跑且 bspwm 在跑 ⇒ `chvt 7`；
+  边界这么窄是为了不干扰 `Ctrl+Alt+F2` 救援 TTY）。
+- ⚠️ **回滚/改会话入口前先停 VT 守卫。**
+
+---
+
+## D. 与「我们机队」相关的坑（别当成通用知识）
+
+- 面板**只在活跃 VT 上可见**：`loginctl activate` 被 polkit 拒 ⇒ 只能靠「不让 DM 起 greeter」。
+- `xset dpms 0 0 0` 必须由会话设：DPMS 定时关屏交给面板自己管，否则 X 会在 11 分钟把面板涂黑。
+- 用户口径就是验收口径：「长时间未操作→面板，动一下→登录页」——**面板必须能自己画登录页**，
+  否则「回到 DM greeter」等于用户看到两个不同的登录界面（这就是那两次事故的本质）。

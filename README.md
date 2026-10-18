@@ -1,20 +1,26 @@
-# hphelm-panel —— hphelm 运维面板 + 自研锁屏（状态机）
+# hphelm-panel
 
-把 `hphelm` 的显示屏当「运维看板 + 锁屏」：不操作时显示资源面板，动一下键鼠进登录页，
-认证通过回到桌面，再次空闲又回面板 —— **像屏保一样循环**。
+> **English TL;DR** — A hand-drawn (no GUI toolkit) X11 **ops dashboard + lock screen** for exactly
+> one machine in my home fleet (`hphelm`): ~1.9k lines of C over cairo + pango, **0.60% of one core**,
+> ~5 MiB private memory, 2 threads, zero GUI toolkit dependencies. Idle → resource panel; any input →
+> login page; PAM auth → desktop; idle again → panel.
+> ⚠️ **This is not a drop-in product.** It is *my* answer for *my* machine, wired into our fleet's
+> desktop stack and operational rules. Read [「这不是给谁用的」](#这不是给谁用的我为什么这么写)
+> before copying anything.
 
-**不再依赖 lightdm 的 greeter**：登录界面与认证都由本项目负责（认证走自建 setuid 助手 + PAM）。
+![运维面板](assets/panel.png)
 
-## 行为（用户口径的四条）
+*（真实截图，非渲染图。上面是空闲时的资源面板，下面是同一套自绘风格的登录页。）*
 
-| # | 行为 |
-| --- | --- |
-| ① | 长时间未操作 → 进入自己画的资源面板 |
-| ② | 晃鼠标 / 点一下 / 按任意键 → 进入登录页 |
-| ③ | 登录成功 → 回到桌面正常操作 |
-| ④ | 再次长时间未操作 → 重新进入面板（循环） |
+![登录页](assets/login.png)
 
-对应状态机（`src/panel.c`）：
+---
+
+## 它做什么
+
+把 `hphelm`（我机队里那台常驻工位的机器）的显示屏当成 **运维看板 + 锁屏**：不操作时显示资源面板，
+动一下键鼠进登录页，认证通过回到桌面，再次空闲又回面板 —— **像屏保一样循环**。
+登录界面**不用 lightdm 的 greeter**，由本项目自己画、自己认证（setuid 助手 + PAM）。
 
 ```
 DESKTOP ──idle≥panel_idle──▶ PANEL ──input(≥input_grace)──▶ LOGIN
@@ -24,10 +30,13 @@ LOGIN ──idle≥login_back──▶ PANEL（密码框清空、清错误）
 PANEL ──idle≥sleep_off──▶ DPMS 关屏；任意输入唤醒
 ```
 
-面板态会 `XGrabKeyboard` 把键盘抓过来；**回桌面时必须放开**（`XUngrabKeyboard`），
-否则桌面收不到任何按键 —— 这是实测踩到的坑，见下。
+面板内容：顶栏（主机/IP/uptime/核数/时间/7×24 标记）· CPU（温度·governor·频率·使用率·每核柱·load·
+5 分钟曲线）· 内存（用量·swap/zram·SSD 读写·磁盘）· 网络（tailscale·上下行速率·双曲线）·
+**进程榜 40 条**（4 列 × 10 行，逐列向下、按 RSS 降序，每 3 秒刷新）。
 
-## 为什么不用 GUI 工具包（实测，同一台机 / 真桌面 / 同一份 1 Hz 工作量）
+## 为什么是「自己画」——这是实测选出来的，不是偏好
+
+同一台机、真桌面、同一份 1 Hz 工作量：
 
 | 路线 | 实现 | PSS | CPU | 线程 |
 | --- | --- | --- | --- | --- |
@@ -39,164 +48,95 @@ PANEL ──idle≥sleep_off──▶ DPMS 关屏；任意输入唤醒
 | 工具包 | GTK3 + Python | 37.1 MiB | 0.08% | 5 |
 | 工具包 | **GTK4 + C** | **119.3 MiB** | 0.50% | **22** |
 
-语言维度（同一份 cairo+pango 工作量）：**C 14.1 MiB vs Rust 14.5 MiB（只差 0.4 MiB）**，
-空转地板 0.1 vs 0.4 MiB。⇒ **内存的大头是工具包，不是语言。**
+**结论**：内存的大头是**工具包**，不是语言（C 14.1 MiB vs Rust 14.5 MiB，只差 0.4 MiB）。
+所以这个项目用 C + cairo + pango，**坚决不引工具包**。
 
-文字质量不吃亏：cairo + pango 就是 GTK 底下那同一套（cairo/pango/fontconfig/harfbuzz）。
-实测：只给一个「只有拉丁字形」的字体族（DejaVu Sans）画「中文测试 汉字」，再换 Noto CJK 重画，
+自绘不吃文字质量的亏：cairo + pango 就是 GTK 底下那同一套（cairo/pango/fontconfig/harfbuzz）。
+实测只给一个「只有拉丁字形」的字体族（DejaVu Sans）画「中文测试 汉字」，再换 Noto CJK 重画，
 **只差 112 像素（0.001%）** ⇒ 字体回退生效，中文与 Nerd Font 图标正常。
-另外自绘能精确 `cairo_scale(1.48)` 对上本机 141.8 DPI（GTK 在 X11 只能整数倍）。
+另外自绘能精确 `cairo_scale(1.48)` 对上本机 141.8 DPI（GTK 在 X11 只支持整数倍缩放）。
 
-**本程序实测**：`PSS 22.8 MiB · Private 13.7 MiB · 2 线程`（比最小程序多的是字体缓存与六块界面）。
+**本程序实测（真机）**：`CPU 0.60% of one core`（20s 内 utime+stime = 120ms）·
+`PSS 24.8 MiB`（其中 **Pss_Anon / Private 仅 5.4 MiB**，其余是与 X/picom/pango 共享的库页）· 2 线程。
 
-## 文件与构建
+## 这不是给谁用的（我为什么这么写）
 
-| 文件 | 作用 |
-| --- | --- |
-| `src/theme.h` | Catppuccin Mocha 配色 + **版式常量**（逻辑像素） |
-| `src/metrics.[ch]` | 数据采集：只读 `/proc`、`/sys`，**不 fork 子进程** |
-| `src/view.[ch]` | 绘制基元（文字/背景渐变/细线/进度条/每核柱/sparkline），两个界面共用 |
-| `src/view_panel.c` | **运维面板版面**（无卡片、三栏 + 进程榜） |
-| `src/view_login.c` | **登录页版面**（无卡片、居中） |
-| `src/auth.[ch]` | 与 setuid 助手通信（**密码只走 stdin，绝不进 argv/env**） |
-| `src/hphelm-auth.c` | **唯一的特权代码**：setuid root，调 PAM `login` 栈验密码 |
-| `src/panel.c` | X11 窗口、事件、状态机、主循环 |
+**这个仓库是我方案的展示，不是通用面板框架。** 它每一行都长在下面这些前提上，换台机器基本都得改：
+
+| 前提 | 具体是什么 | 换环境要改什么 |
+| --- | --- | --- |
+| **屏幕** | 1920×1080 / 141.8 DPI ⇒ `SCALE=1.48`，版式常量按 **1297×729 逻辑像素**调的 | 改 `--scale` 或 `src/theme.h` 的 `L_*` 常量；换分辨率要重新调版式 |
+| **桌面栈** | lightdm(autologin) + bspwm + polybar + picom；面板是 `override-redirect` 全屏覆盖层 | 没有 autologin 的机器上「回桌面」这一步不成立；堆叠/抬窗逻辑要重验 |
+| **认证** | 需要**专用 PAM 服务** `/etc/pam.d/hphelm-auth`（只留 `pam_unix`）；setuid 助手装到 `/usr/local/libexec/` | ⛔ **绝不要复用 `login` 栈**（带 `pam_faillock` ⇒ 会把 autologin 一起锁死，我们实测踩过）；换发行版要自己写这份 PAM 配置 |
+| **会话入口** | `/usr/local/bin/hphelm-session` 里起面板 + 守护循环 + 日志轮转 | 得自己接进你的 DM/会话 |
+| **运维红线** | 「永不向 lightdm 发锁请求」「守护循环只把运行 <5 秒当失败」「回滚先停 VT 守卫」 | 这三条是我们机队用**血的教训**换来的（见 `docs/pitfalls.md`），直接抄代码但不知道这三条会踩同一个坑 |
+| **字体** | JetBrainsMono Nerd Font（图标 + 中文回退靠 fontconfig） | 换字体要重验宽度，版式是拿它量的 |
+| **数据源** | Linux `/proc`、`/sys`：`k10temp` 温度、`nvme*` 统计、zram swap、`/sys/class/net/<iface>` | 温度与磁盘的设备路径是**本机硬件**；非 Linux 不成立 |
+| **机队口径** | 顶栏那个 `24×7` 标记、tailscale 状态、进程榜按 RSS……都是**我们机队**的看板语义 | 这些不是通用概念，别当成「面板标配」 |
+
+一句话：**「自绘、无工具包、低占用」这套方法可以拿走；「这份代码」拿走要付适配成本。**
+
+## 构建与部署
 
 ```sh
 make                 # 需要 pkg-config: x11 x11-xcb xscrnsaver cairo cairo-xlib pangocairo
 sudo make install    # → /usr/local/bin/hphelm-panel
                      # → /usr/local/libexec/hphelm-auth（4755 root:root，setuid）
+```
 
-# 常用参数（默认值见 src/panel.c 顶部）
+部署到 `hphelm` 的完整流程（含红线守卫、回滚）见 **[`docs/deploy.md`](docs/deploy.md)**；
+一条命令的版本是 `tools/deploy.sh`。
+
+常用参数：
+
+```sh
 hphelm-panel --panel-idle 180     # 桌面空闲多久进面板（秒）
 hphelm-panel --login-back 120     # 登录页空闲多久回面板（秒）
 hphelm-panel --input-grace 1.2    # 进面板后多久才接受唤醒（防误触）
 hphelm-panel --sleep-off 3600     # 面板空闲多久关屏（DPMS）
 hphelm-panel --scale 1.48         # 缩放（物理/逻辑像素比）
 hphelm-panel --lock /tmp/x.lock   # 单实例锁路径（默认 /tmp/hphelm-panel.lock）
-                                  #   ⇒ 在 Xvfb 里测时用它，不必杀真机实例
 hphelm-panel --state panel|login  # 强制初始状态（验证界面用）
 hphelm-panel --dump               # 只打采集层数据后退出（不需要 X）
+HPHELM_PANEL_DEBUG=1 …            # 主循环仪表：it/s · poll 结果 · 事件类型 · 各阶段耗时
 ```
 
-## 安装到会话
+## 文档地图
 
-`/usr/local/bin/hphelm-session`（lightdm 的会话入口）里加一行：
+| 你想干什么 | 先读 |
+| --- | --- |
+| **接手维护这个项目**（AI/人都一样） | **[`AGENTS.md`](AGENTS.md)** ← 工作流、红线、验收判据、不要做什么 |
+| 看逐轮交接与当前待办 | [`HANDOFF.md`](HANDOFF.md) |
+| 改 UI / 版式 / 配色 | [`docs/design.md`](docs/design.md)（设计系统 + 版式常量 + 曲线规范） |
+| 搞清状态机 / 双缓冲 / 认证模型 / 数据采集 | [`docs/architecture.md`](docs/architecture.md) |
+| **看不到图时怎么验 UI**（本项目最关键的方法论） | [`docs/verify.md`](docs/verify.md) |
+| 部署 / 重启 / 回滚 | [`docs/deploy.md`](docs/deploy.md) |
+| 已踩过的坑（14 条，每条带判据） | [`docs/pitfalls.md`](docs/pitfalls.md) |
 
-```sh
-/usr/local/bin/hphelm-panel >/tmp/hphelm-panel.log 2>&1 &
-```
-
-并且**不要**再在启动时 `dm-tool lock`（面板接手了锁屏）。
-
-## 安全模型（重要）
-
-- 特权面只有 `hphelm-auth`（~120 行），它**只做一件事**：从 stdin 读一行密码、PAM `login` 验一次、
-  输出 `OK`/`FAIL 原因`。**不开 shell、不执行命令、不写文件**。
-- **只允许验证调用者本人**（`argv[1]` 必须等于 `getuid()` 对应的用户名）⇒ 即使被滥用也不能横向验证别人。
-- 密码**只走 stdin**：不进 argv（`ps` 可见）、不进环境（`/proc/pid/environ` 可见）。
-  自检判据：`tr '\0' ' ' < /proc/$(pgrep -f hphelm-auth)/cmdline` 里不应出现密码。
-- 认证与系统登录**同口径**（`pam_acct_mgmt` 会管账户过期/锁定）。
-- 面板本身以普通用户跑；`setuid` 只在助手那 1 个文件上（`-rwsr-xr-x root:root`）。
-
-## 已踩的坑
-
-1. **未映射窗口上 `XSetInputFocus` 会 BadMatch 直接退出**（`Major opcode 42`）⇒ 必须先 `XMapRaised`。
-2. **`XGrabKeyboard` 只在显示时抓、隐藏时必须 `XUngrabKeyboard` 并把焦点还给 `PointerRoot`**，
-   否则回桌面后整个桌面收不到按键（本程序第一版就是这么写的，已修并加判据：隐藏后另起进程
-   `XGrabKeyboard` 应返回 `GrabSuccess`）。
-3. **`pkill -f <pattern>` 会匹配到执行它的那个 ssh shell 自己**（同一天踩了四次）⇒ kill 写进脚本文件。
-4. **默认网卡不能靠 `readdir(/sys/class/net)` 的顺序**（实测先返回没接线的 `wlp1s0`）。判据是「有全局 IPv4」。
-5. **进程榜只读一次 `/proc/<pid>/stat`** 就够（`(comm)` 与 rss 都在里面），比 comm+statm 少一半 fopen。
-6. **`getifaddrs` 最贵** ⇒ IP 每 10 秒才刷一次。
-7. ⭐ **不要直接往可见窗口上画 —— 没有双缓冲就会每秒闪一下。**
-   原先 `cairo_xlib_surface_create(dpy, win, …)` 直接画窗口，每帧先 `cairo_paint` 清底再逐块画，
-   cairo 分批下发 ⇒ **「刚清完底、还没画完」的中间态会被 picom/屏幕看到**。
-   实测判据（抓窗口连续帧逐像素差分）：每秒两次「整屏 63% 像素变化」，中间帧 PNG 只有 67KB
-   （前后 177KB）且只有底色没有盒子/文字。
-   ⇒ 现在**所有绘制进离屏 `Pixmap`，每帧一次 `XCopyArea` 上屏**（见「渲染架构」）；
-   顺带把这块 pixmap 设为窗口背景（暴露/映射不闪黑）。
-8. ⭐ **`const double w[3] = {a, b, 0}` 会静默产生「零宽度栏」**（本轮踩到）：
-   我为了修「const 数组不能赋值」把第三栏写成 `0`，于是网络栏宽度 = 0 ⇒ sparkline 被压成一根
-   竖线、右对齐文字挤到左边缘，而**编译零告警、程序不崩**。
-   判据：`magick <png> -crop <w>x1+<x>+<y> txt:-` 取一行色块游程，量实际几何 —— 比看图靠谱。
-9. ⭐ **`XCopyArea` 用的 GC 必须关掉 `graphics_exposures`。**
-   默认 `True` ⇒ 每次上屏回一个 `NoExpose` ⇒ `poll()` 立刻返回 ⇒ **主循环自激空转**：
-   实测 35 it/s、CPU 0.8%→33~49%、采样窗口被压到 ~28ms ⇒ 面板上 CPU% 跳成 KTV；
-   连带 `getifaddrs` 变成每 0.3s 一次、网络速率因 `difftime` 恒 0 永远算不出来。
-   修法：`gcv.graphics_exposures = False; XCreateGC(dpy, win, GCGraphicsExposures, &gcv);`
-10. ⭐ **不要用启动瞬间的采样值预填曲线**（等于伪造历史，且量程会被突发尖峰顶上去）——
-    见上面「版式 · 曲线」。
-
-## 版式（2026-10-18 第四轮：用户口径「不要卡片 / 更紧凑」）
-
-**不用卡片**：内容直接铺在整屏渐变底上，分区只靠「一条 1px 细线 + 字号层级 + 留白」，
-没有任何圆角框/底色块。区块标题不单独占行（label 与值同排、靠右对齐）。
+## 目录结构
 
 ```
-┌ 顶栏（一行）───────────────────────────────────────────────────────┐
-│ hphelm 192.168.5.50 up 8h06m 8 核 · eno1        2026-10-18 22:45 ● 24×7
-├────────────────────────── 细线 ───────────────────────────────────┤
-│ CPU            57.6°C │ 内存     1.0G/15.4G │ 网络      tailscale │
-│ 1%  schedutil·1.2GHz  │ 7%                  │ ↓131B/s ↑80B/s      │
-│ [█░░░░░░░░░░░░░░░░░░] │ [█░░░░░░░░░░░░░░░]  │                     │
-│ ▁▂▃▅▂▁▂▃（每核带轨道）│ swap/SSD/磁盘        │ [↓↑ 双曲线 5min]    │
-│ [CPU 5min 曲线]       │ [内存 5min 曲线]     │                     │
-├────────────────────────── 细线 ───────────────────────────────────┤
-│ 进程榜 共 219 个              按内存 (RSS) · 每 3 秒刷新            │
-│ 1 Xorg  181M  11 fcitx5 47M  21 sshd 14M  31 systemd 12M          │
-│ …（4 列 × 10 行 = 40 条，逐列向下，按内存降序）                      │
-└───────────────────────────────────────────────────────────────────┘
+src/theme.h         配色（Catppuccin Mocha）+ 版式常量（逻辑像素）
+src/metrics.[ch]    数据采集：只读 /proc、/sys，不 fork 子进程
+src/view.[ch]       绘制基元：文字/背景渐变/细线/进度条/每核柱/sparkline/量程量化
+src/view_panel.c    面板版面（无卡片、三栏 + 进程榜）
+src/view_login.c    登录页版面（无卡片、居中）
+src/auth.[ch]       与 setuid 助手通信（密码只走 stdin）
+src/hphelm-auth.c   唯一的特权代码：setuid root，调 PAM 验一次密码
+src/panel.c         X11 窗口、事件、状态机、主循环、双缓冲
+tools/              渲染验证（render-ascii/render-region/measure）、帧差分探针、部署脚本
+docs/               架构 / 设计 / 验证 / 坑 / 部署
 ```
 
-**进程榜**（用户要的「更多、分列、几秒一刷」）：
+## 状态与边界
 
-- 条数 **40**（`TOPN`，4 列 × 10 行，逐列向下填、按 RSS 降序）；机器实测约 220 个进程，
-  `read_procs` 本来就会遍历 `/proc` 后 `qsort`，**取前 6 还是前 40 的扫描成本一样**。
-- 刷新 **每 3 秒**（采样 1 Hz，`nsamp % 3`）；`read_procs` 是面板里最贵的一项（遍历 `/proc`），
-  实测 3 秒一刷对 CPU 无可测影响（整机 **0.60% of one core**，20s 内 utime+stime = 120ms）。
-- 每行 `名次 · 进程名 · pid · 内存`，内存右对齐到本列右边界；口径明确标注 **RSS**（与 htop 一致）。
+- **活跃**：这是 `hphelm` 上正在跑的方案（看板 + 锁屏都是它）。
+- **不做**：不做成通用面板、不做配置系统、不做主题系统、不引 GUI 工具包、不追跨平台。
+  想「通用化」的改动一律先问「这是不是把我这台机的假设包装成了产品」。
+- **没有 license 文件** = 保留所有权利（和我其它仓库一致）。要拿去用请先读上面那张适配表，
+  或者直接把它当成「一个具体方案长什么样」的参考。
 
-**曲线（sparkline）**：
+## 相关
 
-- 量程用 `v_nice_ceil` 量化到 1/2/5×10ⁿ ⇒ **不会因为来了一个新高就整条曲线整体跳**；
-  CPU/内存固定 0~100。
-- ⚠️ **不要用「启动瞬间的采样值」预填曲线**（本轮踩到）：那个值来自 120ms 的采样窗口，
-  实测常是 0、偶尔是突发尖峰 ⇒ 曲线要么贴底、要么被假尖峰把量程顶上去把真数据压扁，
-  等于伪造 5 分钟历史。现在**不预填**，曲线从右侧诚实生长，并画一条**零基线**让空曲线区
-  看起来是「0」而不是「坏了」。
-
-## 渲染架构（双缓冲）
-
-```
-每帧： render()  ──全部绘制进离屏 Pixmap（back）──▶  cairo_surface_flush
-         │                                              │
-         └── 内容签名（FNV-1a over metrics+界面态）没变就直接 return（稳定 1 Hz）
-                                                        ▼
-                              blit(): 一次 XCopyArea(back → win)  ──▶  XFlush
-```
-
-- 窗口背景 = 后备 pixmap（`XSetWindowBackgroundPixmap`）⇒ 暴露/映射时服务器自己回填。
-- `win_show()` 顺序：先 `render()` → `XMapRaised` → `XSync` → `blit()` → 设焦点/抓键。
-- 尺寸变化（`ConfigureNotify`）⇒ 重建 pixmap + 强制重绘。
-- 验收判据：抓窗口连续帧差分，`>30% 像素变化` 的帧应为 **0**。
-
-## 排障：主循环仪表
-
-```sh
-HPHELM_PANEL_DEBUG=1 ./hphelm-panel --state panel     # 每秒一行
-# 主循环 2 it/s · 事件 0 · poll[可读 0/超时 2/其他 0] · 重绘 1 · 采样 1 ·
-#   类型: · 签名 0.1ms 绘制 3.5ms 上屏 0.1ms
-```
-
-「谁在叫醒主循环」看 `poll` 那一段与「类型」直方图 —— 本轮就是靠它发现 `NoExpose` 自激空转的。
-
-## 待做
-
-- ⬜ 「立即锁屏」快捷键（现在只能等空闲到阈值；可加一个 DBus 或信号触发的入口）
-- ⬜ 密码错误次数限制 / 锁定（现在只有 2 秒冷却）
-- ⬜ 面板内容补齐：服务概览、进程榜可选按 CPU 排序
-- ⬜ UI 观感优化（候选见 `HANDOFF.md` 第四节：顶部 48px 空白、每核小柱、sparkline 自动缩放导致的
-  视觉跳动、进程榜内存口径、登录页卡片位置、面板平涂 vs 登录页渐变、认证中缺进度反馈…）
-- ⬜ ~~PangoLayout 缓存 / 区域局部重绘（降 CPU）~~ —— 优先级已降：实测 CPU **0.60% of one core**
-  （绘制 ~3.5ms/帧、上屏 ~0.05ms、签名 ~0.05ms）
+- 机队视角的运维记录（部署位置、VT 守卫、红线）：`hpcore` 上 `kb` 仓库的 `runbooks/hphelm.md`
+  「运维面板（hphelm-panel）」节。**那是机队事实的权威来源**，本项目文档负责代码与设计。

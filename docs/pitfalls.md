@@ -1,4 +1,4 @@
-# 已踩的坑（15 条，每条带判据）
+# 已踩的坑（16 条，每条带判据）
 
 > 这个项目最贵的资产是这张表 —— 每一条都是**真机实测**踩出来的，而且大部分**不报错、不崩溃**。
 > 改代码前扫一眼；踩到新坑请追加（带判据），并在 `HANDOFF.md` 记一行。
@@ -109,11 +109,38 @@ lightdm 退回 greeter 并把 VT 切到 tty8 ⇒ 自研面板被藏在后面（�
   边界这么窄是为了不干扰 `Ctrl+Alt+F2` 救援 TTY）。
 - ⚠️ **回滚/改会话入口前先停 VT 守卫。**
 
+### 15. 绝不用 `light-locker` / `dm-tool lock` —— 与 lightdm 构成「两把锁」，且有两个静默陷阱
+
+> **来源**：v1（`feat: hphelm 运维面板首版` 那条血缘）的 `tools/hphelm-lockd`（Python 空闲锁屏守护）。
+> v2 把锁屏收进面板自己（`--lock` + 自研 PAM），那份 Python 实现已废；但下面三条**实测结论**与实现无关，删掉就会重踩。
+> 归档于 2026-10-19 删除 `hphelm-panel-legacy-20261018` 之前（取「抢救知识再删」口径）。
+
+**① `light-locker` 与 lightdm 是「两把锁」**：lightdm 解锁时会自己 `Unlock`（日志 `Unlocking login1 session`），
+但 light-locker 的状态没被同步 ⇒ 它立刻又要求上锁 ⇒ **用户必须登录两遍**。实测证据链：
+
+```
+[2067s] Authentication complete → Unlocking login1 session 418 → Activating VT 7
+[2068s] Creating greeter session        ← 1 秒后又建 greeter
+[2069s] Locking login1 session 418      ← 立刻又锁上 ⇒ 第二次登录
+```
+
+**② `dm-tool lock` 缺 `XDG_SEAT_PATH` 时会静默失败**：该变量由 DM 注入，手工从 ssh 起守护时没有 ⇒
+报 `Not running inside a display manager, XDG_SEAT_PATH not defined` 后**什么也不做**（不报错、不锁屏）。
+
+**③ 座位已锁时再发一次锁请求 ⇒ lightdm 会再新建一个 greeter X 服务器**（实测 VT 8→9→10 累积，**状态泄漏**）。
+
+**正解**：锁屏**完全由面板自己负责**（`hphelm-panel --lock`），**绝不把控制权交给 DM** ——
+这同时是第 13、14 条的同一条结论。若要自写空闲守护，必须①按**时间**判空闲（解锁后 idle 立刻归零 ⇒
+不会刚解锁又锁）②发锁前先判「是否已锁」，已锁就跳过。
+
+**判据**：`pgrep -c light-locker` = 0、`pgrep -c dm-tool` = 0；锁屏/解锁一轮后 `loginctl` 里
+**不得**出现新的 greeter session，且活跃 VT 保持为会话那一个。
+
 ---
 
 ## D. 与「我们机队」相关的坑（别当成通用知识）
 
-### 15. `sleep_off = 0` 曾被写成「立即关屏」（默认值一改就翻车）
+### 16. `sleep_off = 0` 曾被写成「立即关屏」（默认值一改就翻车）
 
 原实现是裸比较 `if (idle >= CFG_SLEEP_OFF && !screen_off)`。想关掉这个功能的人自然会写
 `--sleep-off 0`，但 `idle >= 0` **恒真** ⇒ 进 PANEL 立刻 `xset dpms force off`，语义正好反过来。

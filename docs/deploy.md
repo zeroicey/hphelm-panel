@@ -21,15 +21,20 @@
 
 ```sh
 cd /data/dev/hphelm-panel
-tools/deploy.sh            # rsync 源码 → hphelm:~/projects/panel2 → ssh 上 make → sudo make install → 重启面板
+tools/deploy.sh            # rsync 源码 → hphelm:/data/dev/hphelm-panel → ssh 上 make → sudo make install → 重启面板
 tools/deploy.sh --check    # 只打印将执行的动作，不落地
 ```
+
+⚠️ **2026-10-19 改了部署副本路径**：旧版是 `hphelm:~/projects/panel2`，但同日的「目录宪法」把 home 里的
+`projects/` 去掉了（代码一律放 `/data/dev/<项目>`）⇒ 现为 **`hphelm:/data/dev/hphelm-panel`**，
+与 hpcore 的权威路径同名。脚本里的 `DEST` 已改成绝对路径（旧版把相对路径拼在 `~/` 后面，改目录时会静默指错地方）。
 
 脚本做的事等价于：
 
 ```sh
-rsync -az --delete src tools Makefile README.md AGENTS.md HANDOFF.md docs/ hphelm:~/projects/panel2/
-ssh hphelm 'cd ~/projects/panel2 && make && sudo make install'
+rsync -az --delete src tools Makefile README.md AGENTS.md HANDOFF.md docs/ hphelm:/data/dev/hphelm-panel/
+ssh hphelm 'cd /data/dev/hphelm-panel && make && sudo make install'
+ssh hphelm '/data/dev/hphelm-panel/hphelm-panel --dump | tail -1'   # 语义自检
 ssh hphelm 'pkill -x hphelm-panel'      # 守护循环会在 ~1s 内用新二进制拉起
 ```
 
@@ -42,7 +47,8 @@ ssh hphelm 'pkill -x hphelm-panel'      # 守护循环会在 ~1s 内用新二进
 ssh hphelm 'cat /sys/class/tty/tty0/active'        # tty7
 ssh hphelm 'pgrep -cx slick-greeter'               # 0
 ssh hphelm 'pgrep -cx hphelm-panel'                # 1
-ssh hphelm 'md5sum ~/projects/panel2/hphelm-panel /usr/local/bin/hphelm-panel'   # 一致
+ssh hphelm "cd /data/dev/hphelm-panel && ./hphelm-panel --dump | tail -1"   # sleep_off=off（永不关屏）
+ssh hphelm 'md5sum /data/dev/hphelm-panel/hphelm-panel /usr/local/bin/hphelm-panel'   # 一致
 ssh hphelm 'tail -3 /tmp/hphelm-panel.log'
 DISPLAY=:0 tools/probe-frames 60                   # >30% 像素变化帧 = 0
 ```
@@ -60,7 +66,7 @@ DISPLAY=:0 tools/probe-frames 60                   # >30% 像素变化帧 = 0
 ```sh
 # ⛔ 永不出现 dm-tool / light-locker
 xset s off
-xset dpms 0 0 0          # DPMS 定时交给面板自己管
+xset dpms 0 0 0          # DPMS 定时交给面板自己管（面板默认 sleep_off=0 ⇒ 永不关屏）
 
 # 日志轮转（>1MiB 就 tail 到 256K；直接 rm 会删掉正在写的 inode）
 [ -f /tmp/hphelm-panel.log ] && [ "$(stat -c %s /tmp/hphelm-panel.log)" -gt 1048576 ] && \

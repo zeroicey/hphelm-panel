@@ -1,4 +1,4 @@
-# 已踩的坑（14 条，每条带判据）
+# 已踩的坑（15 条，每条带判据）
 
 > 这个项目最贵的资产是这张表 —— 每一条都是**真机实测**踩出来的，而且大部分**不报错、不崩溃**。
 > 改代码前扫一眼；踩到新坑请追加（带判据），并在 `HANDOFF.md` 记一行。
@@ -112,6 +112,17 @@ lightdm 退回 greeter 并把 VT 切到 tty8 ⇒ 自研面板被藏在后面（�
 ---
 
 ## D. 与「我们机队」相关的坑（别当成通用知识）
+
+### 15. `sleep_off = 0` 曾被写成「立即关屏」（默认值一改就翻车）
+
+原实现是裸比较 `if (idle >= CFG_SLEEP_OFF && !screen_off)`。想关掉这个功能的人自然会写
+`--sleep-off 0`，但 `idle >= 0` **恒真** ⇒ 进 PANEL 立刻 `xset dpms force off`，语义正好反过来。
+（本轮之前默认值是 3600，所以没人踩到；2026-10-19 把默认改成「永不关屏」时才必须同时改判据。）
+
+**正解**：`if (CFG_SLEEP_OFF > 0 && idle >= CFG_SLEEP_OFF && !screen_off)`，即 **0 或负数 = 永不关屏**。
+**判据**：`hphelm-panel --dump`（或启动日志首行）打印 `sleep_off=off（永不关屏）`；
+再 `--sleep-off 1 --state panel` 在 Xvfb 里跑 ⇒ 日志应出现 `面板空闲 Ns ⇒ 关屏（DPMS）`
+（证明正数路径仍可用）；而 `--sleep-off 0` 跑 10 秒日志里**不得**出现该行。
 
 - 面板**只在活跃 VT 上可见**：`loginctl activate` 被 polkit 拒 ⇒ 只能靠「不让 DM 起 greeter」。
 - `xset dpms 0 0 0` 必须由会话设：DPMS 定时关屏交给面板自己管，否则 X 会在 11 分钟把面板涂黑。

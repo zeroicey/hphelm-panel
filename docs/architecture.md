@@ -12,8 +12,12 @@ DESKTOP ──idle≥panel_idle(180s)──▶ PANEL ──input(≥input_grace 
    ▲                                                                    │
    └────────────────── 认证成功（PAM，见第四节）────────────────────────┘
 LOGIN ──idle≥login_back(120s)──▶ PANEL（密码框清空、清错误）
-PANEL ──idle≥sleep_off(3600s)──▶ DPMS 关屏；任意输入唤醒（并进 LOGIN）
+PANEL ──idle≥sleep_off(0=永不)──▶ DPMS 关屏；任意输入唤醒（并进 LOGIN）
 ```
+
+> **`sleep_off` 的 0 语义（2026-10-19）**：默认改成 **0 = 永不关屏**（用户要求看板 7×24 一直亮）。
+> 实现上必须写 `CFG_SLEEP_OFF > 0 && idle >= CFG_SLEEP_OFF` —— **裸写 `idle >= CFG_SLEEP_OFF`
+> 会让 0 变成「立即关屏」，语义正好反过来**（这是本轮改之前就埋着的坑）。
 
 **空闲时间怎么来**：`XScreenSaverQueryInfo(dpy, root, info)` 的 `info->idle`（毫秒）。
 **不要自己数鼠标事件** —— 面板只在自己显示时收到事件，桌面态收不到，`XScreenSaver` 是唯一的全局口径。

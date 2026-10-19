@@ -16,6 +16,7 @@
  *      └──────────────认证成功──────────────────────────────────┘
  *   LOGIN ──idle≥login_back──▶ PANEL（密码框留空、清错误）
  *   PANEL ──idle≥sleep_off──▶ 关屏（DPMS），任意输入即唤醒
+ *        └─ sleep_off ≤ 0 ⇒ 永不关屏（面板要 7×24 一直显示，2026-10-19 口径）
  *
  * 用法： hphelm-panel [--scale N] [--panel-idle S] [--login-back S]
  *                     [--input-grace S] [--sleep-off S] [--dump] [--once]
@@ -65,7 +66,7 @@ static double SCALE = 1.48;
 static double CFG_PANEL_IDLE = 180;   /* 桌面空闲多久进面板 */
 static double CFG_LOGIN_BACK = 120;   /* 登录页空闲多久回面板 */
 static double CFG_INPUT_GRACE = 1.2;  /* 进面板后多久才接受“唤醒”（防误触） */
-static double CFG_SLEEP_OFF = 3600;   /* 面板空闲多久关屏 */
+static double CFG_SLEEP_OFF = 0;      /* 面板空闲多久关屏；**0 或负数 = 永不关屏**（当前默认） */
 static int FORCE_STATE = -1;
 static int DBG = 0;               /* HPHELM_PANEL_DEBUG=1：每秒打印主循环仪表 */
 static long dbg_iter, dbg_ev, dbg_poll_rd, dbg_poll_to, dbg_poll_oth, dbg_redraw, dbg_sample;
@@ -73,6 +74,12 @@ static long dbg_evtype[64];
 static double dbg_ms_render, dbg_ms_blit, dbg_ms_sig;
 
 static const char *CFG_LOCK = "/tmp/hphelm-panel.lock";  /* 单实例锁（--lock 可换，便于 Xvfb 并行测试） */
+
+/* 关屏阈值的人类可读形式（0 ⇒ 永不关屏），日志/--dump 共用 */
+static void sleep_off_desc(char *buf, size_t n) {
+    if (CFG_SLEEP_OFF > 0) snprintf(buf, n, "%.0fs", CFG_SLEEP_OFF);
+    else snprintf(buf, n, "off（永不关屏）");
+}
 
 /* ---------------- X 状态 ---------------- */
 static Display *dpy;
@@ -450,14 +457,6 @@ int main(int argc, char **argv) {
         }
     }
 
-    /* 单实例锁：两个 hphelm-panel 会互相抢抬窗（都 override-redirect），
-       屏幕会变成两张界面互相覆盖 —— 实测踩到（手工起一个 + 守护循环又起一个）。 */
-    int lockfd = open(CFG_LOCK, O_CREAT | O_RDWR, 0644);
-    if (lockfd >= 0 && flock(lockfd, LOCK_EX | LOCK_NB) != 0) {
-        fprintf(stderr, "hphelm-panel: 已有实例在运行（%s 被锁）⇒ 退出\n", CFG_LOCK);
-        return 3;
-    }
-
     signal(SIGUSR1, on_sig); /* 立即锁屏（进登录页） */
     signal(SIGUSR2, on_sig); /* 立即回面板 */
     signal(SIGPIPE, SIG_IGN);
@@ -480,9 +479,24 @@ int main(int argc, char **argv) {
         printf("nproc=%d top:", M.nproc);
         for (int i = 0; i < M.ntop; i++) printf(" %s(%.0fM)", M.top[i].name, M.top[i].rss_mb);
         printf("\n");
-        printf("panel_idle=%.0fs login_back=%.0fs grace=%.1fs sleep_off=%.0fs user=%s\n",
-               CFG_PANEL_IDLE, CFG_LOGIN_BACK, CFG_INPUT_GRACE, CFG_SLEEP_OFF, g_user);
+        char so[32] = {0};
+        sleep_off_desc(so, sizeof so);
+        printf("panel_idle=%.0fs login_back=%.0fs grace=%.1fs sleep_off=%s user=%s\n",
+               CFG_PANEL_IDLE, CFG_LOGIN_BACK, CFG_INPUT_GRACE, so, g_user);
         return 0;
+    }
+
+    /* 单实例锁：两个 hphelm-panel 会互相抢抬窗（都 override-redirect），
+       屏幕会变成两张界面互相覆盖 —— 实测踩到（手工起一个 + 守护循环又起一个）。
+       ⚠️ 必须放在 `--dump` 之后：dump 不需要 X、也不碰窗口，却会被正在跑的实例挡住
+       （实测：deploy 里的 `--dump` 自检返回 3、打不出参数，看着像「默认值被改回去了」）。 */
+    int lockfd = -1;
+    if (!dump && !once) {          /* --dump / --once 不建窗口，不需要抢锁 */
+        lockfd = open(CFG_LOCK, O_CREAT | O_RDWR, 0644);
+        if (lockfd >= 0 && flock(lockfd, LOCK_EX | LOCK_NB) != 0) {
+            fprintf(stderr, "hphelm-panel: 已有实例在运行（%s 被锁）⇒ 退出\n", CFG_LOCK);
+            return 3;
+        }
     }
 
     dpy = XOpenDisplay(NULL);
@@ -521,11 +535,22 @@ int main(int argc, char **argv) {
     /* 初始状态 */
     state = (FORCE_STATE >= 0) ? FORCE_STATE : ST_DESKTOP;
     state_enter = now_s();
+    char so[32] = {0};
+    sleep_off_desc(so, sizeof so);
     logf_("启动：初始 %s · panel_idle=%.0fs · login_back=%.0fs · grace=%.1fs · "
-          "sleep_off=%.0fs · scale=%.2f · %dx%d",
-          state_name(state), CFG_PANEL_IDLE, CFG_LOGIN_BACK, CFG_INPUT_GRACE, CFG_SLEEP_OFF,
+          "sleep_off=%s · scale=%.2f · %dx%d",
+          state_name(state), CFG_PANEL_IDLE, CFG_LOGIN_BACK, CFG_INPUT_GRACE, so,
           SCALE, SW, SH);
     if (state != ST_DESKTOP) win_show();
+
+    /* ⭐ 启动自愈：本程序的 screen_off 只反映「自己发过什么」，不反映真实 DPMS 状态。
+       旧版 sleep_off=3600 关过屏、或者在「永不关屏」上线前就停在 DPMS Off，
+       新实例会以为屏是亮的 ⇒ 唤醒路径永不触发 ⇒ 屏幕永远黑着（实测：部署后是 DPMS Off）。
+       「永不关屏」模式下启动就无条件开一次屏，把它掀回来。 */
+    if (CFG_SLEEP_OFF <= 0) {
+        dpms(1);
+        logf_("永不关屏模式：启动时确保屏幕开启（防止上次遗留的 DPMS Off）");
+    }
 
     /* 预填一点曲线数据 */
     for (int i = 0; i < 3; i++) {
@@ -593,7 +618,9 @@ int main(int argc, char **argv) {
         if (state == ST_DESKTOP) {
             if (idle >= CFG_PANEL_IDLE) set_state(ST_PANEL);
         } else if (state == ST_PANEL) {
-            if (idle >= CFG_SLEEP_OFF && !screen_off) {
+            /* CFG_SLEEP_OFF ≤ 0 = 永不关屏（绝不能写成裸 idle>=CFG_SLEEP_OFF：
+               那样 0 会变成「立刻关屏」，语义正好反过来） */
+            if (CFG_SLEEP_OFF > 0 && idle >= CFG_SLEEP_OFF && !screen_off) {
                 logf_("面板空闲 %.0fs ⇒ 关屏（DPMS）", idle);
                 dpms(0);
             }

@@ -24,7 +24,7 @@
 
 ## 一、30 秒上手
 
-**权威源码在 `hpcore:/data/dev/hphelm-panel`**（旧位置 `hphelm:~/projects/panel2` 保留为部署副本）：
+**权威源码在 `hpcore:/data/dev/hphelm-panel`**（部署副本 **2026-10-19 起改为 `hphelm:/data/dev/hphelm-panel`**（home 里不再放代码；旧 `~/projects/panel2` 已随目录宪法消失））：
 
 ```bash
 cd /data/dev/hphelm-panel
@@ -141,7 +141,7 @@ magick /tmp/p.png -crop ... ; # 见 README 的方法
 
 | 项 | 做法 |
 | --- | --- |
-| **实体** | `hphelm:~/projects/panel2` → **`hpcore:/data/dev/hphelm-panel`**（开发域实体根；git bundle 搬全历史，非 squash） |
+| **实体** | `hpcore:/data/dev/hphelm-panel`（开发域实体根；git bundle 搬全历史，非 squash）· 部署副本 `hphelm:/data/dev/hphelm-panel`（2026-10-19 起） |
 | **仓库** | **`https://github.com/zeroicey/hphelm-panel`**（public、无 license，与其余 40 个仓库一致）；描述里就写明「不是通用产品」 |
 | **README** | 重写：公开定位 + 实测选型表 + **「这不是给谁用的」适配前提表**（屏幕/桌面栈/认证/会话入口/红线/字体/数据源/机队口径）+ 文档地图 + 状态与边界 |
 | **AGENTS.md** | **给专职维护 AI 的工作指南**：三条红线 · 硬约束（性能预算/不引工具包）· 工作流 · 每轮验收判据 · 设计系统要点 · 代码地图 · 不要做什么 · 交付纪律 · 环境速查 |
@@ -170,8 +170,11 @@ lightdm+bspwm+picom、专用 PAM 服务、会话包装器、三条运维红线�
 
 **功能 / 其他**
 8. **「立即锁屏」只有信号**：`kill -USR1`。可以在 `sxhkd` 里包一个快捷键（`pkill -USR1 -x hphelm-panel`）。
-9. **DPMS 关屏后唤不醒**：`sleep_off=3600` 后关屏，理论上任意输入会 `dpms(1)`；
-   但实测未验证（需要等 1 小时）。可以调小 `--sleep-off` 测一次。
+9. ~~**DPMS 关屏后唤不醒**：`sleep_off=3600` 后关屏，理论上任意输入会 `dpms(1)`；
+   但实测未验证（需要等 1 小时）。可以调小 `--sleep-off` 测一次。~~
+   **2026-10-19 关闭**：用户裁决定位是「看板要 7×24 一直显示」⇒ 默认 `sleep_off=0`（永不关屏），
+   并且把「0 语义」写对了（`CFG_SLEEP_OFF > 0 && idle >= ...`；旧代码裸比较会让 0 变成「立即关屏」）。
+   唤醒路径（`on_key/on_motion/on_button` 里的 `if (screen_off) dpms(1)`）保留不动，以备日后调回正数。
 10. **面板内容还没「服务概览」**：mockup 里的「26 容器全绿 / 磁盘 / 备份」还没做（需要探测 hpcore 的容器）。
 11. **多显示器未处理**：现在固定用 `DefaultScreen` 的整屏尺寸。
 12. ~~**CPU 0.8%**：主要花在每秒约 50 段 pango 文字整形。两个杠杆：PangoLayout 缓存、区域局部重绘。~~
@@ -319,7 +322,7 @@ journalctl -t hphelm-vt-guard -n 3                     # 应看到「抢到 tty8
 
 ## 九、下一轮开工前请先读
 
-- `hphelm:~/projects/panel2/README.md`（本项目自述：行为、选型实测表、安全模型、6 个坑）
+- `hpcore:/data/dev/hphelm-panel/README.md`（本项目自述：行为、选型实测表、安全模型、6 个坑）
 - kb `runbooks/hphelm.md` 的「运维面板（hphelm-panel）」节（机队视角 + 验收判据）
 - kb 两个坑档：`2026-10-18-lockscreen-auth-reusing-login-pam-stack-*`、
   `2026-10-18-fullscreen-override-redirect-overlay-traps`

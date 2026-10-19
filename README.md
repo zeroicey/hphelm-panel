@@ -26,8 +26,9 @@
 DESKTOP ──idle≥panel_idle──▶ PANEL ──input(≥input_grace)──▶ LOGIN
    ▲                                                          │
    └──────────────────── 认证成功（PAM）──────────────────────┤
-LOGIN ──idle≥login_back──▶ PANEL（密码框清空、清错误）
+LOGIN ──idle≥login_back──▶ PANEL（密码框留空、清错误）
 PANEL ──idle≥sleep_off──▶ DPMS 关屏；任意输入唤醒
+       └─ sleep_off ≤ 0 ⇒ **永不关屏**（默认，2026-10-19 起）
 ```
 
 面板内容：顶栏（主机/IP/uptime/核数/时间/7×24 标记）· CPU（温度·governor·频率·使用率·每核柱·load·
@@ -97,7 +98,7 @@ sudo make install    # → /usr/local/bin/hphelm-panel
 hphelm-panel --panel-idle 180     # 桌面空闲多久进面板（秒）
 hphelm-panel --login-back 120     # 登录页空闲多久回面板（秒）
 hphelm-panel --input-grace 1.2    # 进面板后多久才接受唤醒（防误触）
-hphelm-panel --sleep-off 3600     # 面板空闲多久关屏（DPMS）
+hphelm-panel --sleep-off 0       # 面板空闲多久关屏（DPMS）；**0 或负数 = 永不关屏（默认）**
 hphelm-panel --scale 1.48         # 缩放（物理/逻辑像素比）
 hphelm-panel --lock /tmp/x.lock   # 单实例锁路径（默认 /tmp/hphelm-panel.lock）
 hphelm-panel --state panel|login  # 强制初始状态（验证界面用）

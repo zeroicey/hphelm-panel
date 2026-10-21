@@ -2,3 +2,7 @@
 *.o
 hphelm-panel
 hphelm-auth
+
+# engram / pi 会话态（.ai/ 与 .engram/BOOTSTRAP.md 要提交，drafts 不提交）
+.engram/drafts/
+.pi/

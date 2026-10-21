@@ -1,24 +1,29 @@
 # AGENTS.md —— 给「负责 hphelm-panel 的 AI」的工作指南
 
 > 你是这个项目的专职维护者。这份文件是你的操作手册：**先读它，再动手**。
-> 详细材料在 `docs/`；逐轮交接与当前待办在 `HANDOFF.md`。
-> 最后更新：2026-10-18。
+> 详细材料在 `docs/`；逐轮交接与当前待办在 `HANDOFF.md`；**项目记忆库在 `.ai/`**（见文末契约）。
+> 最后更新：**2026-10-21**（源码与部署目录合一 = `hphelm:/data/dev/hphelm-panel`）。
 
 ---
 
 ## 0. 三十秒上手
 
 ```sh
-# 源码在这里（hpcore）；部署目标是另一台机器 hphelm
-cd /data/dev/hphelm-panel
-make                      # 需要 pkg-config: x11 x11-xcb xscrnsaver cairo cairo-xlib pangocairo
+cd /data/dev/hphelm-panel   # 在 hphelm 本机；这个目录既是源码也是部署目录
+make                        # 需要 pkg-config: x11 x11-xcb xscrnsaver cairo cairo-xlib pangocairo
+
 # 先在隔离环境看效果（不要一上来动真屏）
 Xvfb :9 -screen 0 1920x1080x24 -ac &
 DISPLAY=:9 ./hphelm-panel --state panel --lock /tmp/xv9.lock    # --lock 避免和真机实例抢锁
-# 部署到真机（含红线守卫）
-tools/deploy.sh --check   # 只看会做什么
-tools/deploy.sh           # rsync → 在 hphelm 上 make → install → 重启面板
+
+# 更新系统屏保（构建 → 备份旧二进制 → 安装 → 重启 → 判据，一条命令）
+tools/deploy.sh --check     # 只看会做什么（只读）
+tools/deploy.sh             # 真的部署；桌面会露出 1~2 秒，正常
 ```
+
+⚠️ **`tools/deploy.sh` 必须在本机跑**：2026-10-19 起源码与部署目录合一，没有 rsync、不 ssh 自己。
+旧的 `ssh hphelm 'make …'` 写法**必然失败**（本机 `~/.ssh/config` 没有 `hphelm` 这个 Host）。
+部署的完整说明（七个阶段、判据表、三层回滚、六件绝不能做的事）在 **[`docs/deploy.md`](docs/deploy.md)**。
 
 **这个项目是什么**：`hphelm`（机队里常驻工位的那台）的**运维看板 + 自研锁屏**。
 X11 + cairo + pango 纯自绘（无 GUI 工具包），约 1.9k 行 C。
@@ -26,6 +31,18 @@ X11 + cairo + pango 纯自绘（无 GUI 工具包），约 1.9k 行 C。
 
 **它不是什么**：不是通用面板、不是产品、不需要「适配更多环境」。
 README 的「这不是给谁用的」那张表就是**设计边界**——不要为了通用性牺牲机队约束。
+
+### 接手第一小时读什么（别一上来读 2000 行 C）
+
+| 顺序 | 读什么 | 你会得到 |
+| --- | --- | --- |
+| 1 | 本文件（你正在读） | 红线、硬约束、工作流、验收判据 |
+| 2 | `.ai/CURRENT_TASK.md` | 此刻在做什么、卡在哪、下一步是什么 |
+| 3 | **`docs/deploy.md`** | **怎么改完就上真屏（含回滚与六件绝不能做的事）** |
+| 4 | `HANDOFF.md` 前列 + 第四节 | 逐轮干了什么、已知粗糙点（下一轮候选） |
+| 5 | `docs/architecture.md` · `docs/design.md` | 状态机/双缓冲/采样/认证 · 无卡片版式规则 |
+| 6 | `docs/verify.md` · `docs/pitfalls.md` | 看不到图怎么验 · 16 条已踩的坑（每条带判据） |
+| 7 | `.ai/` | 决策记录（`.ai/decisions/`）、坑案例、上一轮 handoff |
 
 ---
 
@@ -50,7 +67,7 @@ README 的「这不是给谁用的」那张表就是**设计边界**——不要
 会把 VT 一直往 tty7 拽。**回滚/改会话入口前先 `sudo systemctl disable --now hphelm-vt-guard.service`。**
 
 > 三条的完整坑因、判据、以及「为什么兜底不能交给 DM」见 [`docs/pitfalls.md`](docs/pitfalls.md)
-> 与 `kb`（hpcore）的 `pitfalls/2026-10-18-guard-fallback-self-inflicted-traps.md`。
+> 与 `kb` 的 `pitfalls/2026-10-18-guard-fallback-self-inflicted-traps.md`。
 
 ---
 
@@ -75,10 +92,10 @@ README 的「这不是给谁用的」那张表就是**设计边界**——不要
 ① 读 HANDOFF.md 第四节（当前候选） + docs/design.md（如果要动 UI）
 ② 在 Xvfb 里改到满意（--lock 隔离，别动真机）
 ③ 用 docs/verify.md 的方法量像素（我看不到图，这是唯一可信手段）
-④ 真机：tools/deploy.sh → 重启面板（用户会看到桌面露出 1~2 秒，正常）
+④ 真机：`tools/deploy.sh`（本机；构建+备份+安装+重启+判据一把过。桌面露出 1~2 秒，正常）
 ⑤ 真机判据全过（见第 4 节）
 ⑥ 文档：HANDOFF.md 记本轮 + README/docs 同步 + git commit
-⑦ 机队事实有变（部署位置/服务名/红线）⇒ 提醒 hpcore 那边更新 kb 的 runbooks/hphelm.md
+⑦ 机队事实有变（部署位置/服务名/红线）⇒ 提醒维护 kb 的人更新 `kb/runbooks/hphelm.md`
 ```
 
 **改 UI 的第一原则：先量后改。** 不要凭想象改版式——用 `tools/render-ascii.py` 看整屏、
@@ -87,6 +104,9 @@ README 的「这不是给谁用的」那张表就是**设计边界**——不要
 ---
 
 ## 4. 验收判据（**每轮都必须跑，缺一项不算完**）
+
+**先跑一条命令**：`tools/deploy.sh`（它把下面 ①③④ 串起来并按项目口径判定；`--check` 只看）。
+它跑不了时（或你要单跑某项）用下列命令：
 
 ```sh
 # ① 不闪：抓窗口连续帧，>30% 像素变化的帧必须是 0
@@ -154,8 +174,9 @@ python3 tools/measure.py assets/panel.png --runs 240 --bands
 1. **每轮结束**：`HANDOFF.md` 追加本轮小结（做了什么 / 判据数字 / 踩了什么）+ 更新「待做」。
 2. **改了行为/接口/版式** ⇒ 同步 `README.md` 与对应的 `docs/*.md`（README 是门面，docs 是细节）。
 3. **提交信息**：一句话说清「改了什么 + 为什么」，带判据数字（沿用现有提交风格，中文即可）。
-4. **机队事实变更**（部署路径、服务名、红线、VT 守卫）⇒ 必须提醒 hpcore 侧更新
-   `kb/runbooks/hphelm.md` 的「运维面板（hphelm-panel）」节。**代码知识归本仓库，机队事实归 kb。**
+4. **机队事实变更**（部署路径、服务名、红线、VT 守卫）⇒ 必须提醒维护 kb 的人更新
+   `kb/runbooks/hphelm.md` 的「运维面板（hphelm-panel）」节（kb 主副本在 `hphelm:/data/kb`）。
+   **代码知识归本仓库，机队事实归 kb。**
 5. **不要 force-push、不要改历史**；`main` 分支直接提交（本项目单人维护）。
 
 ---
@@ -164,11 +185,57 @@ python3 tools/measure.py assets/panel.png --runs 240 --bands
 
 | 项 | 值 |
 | --- | --- |
-| 源码（权威） | `hpcore:/data/dev/hphelm-panel`（本目录） |
+| 源码（权威）= 部署目录 | **`hphelm:/data/dev/hphelm-panel`**（同一份，2026-10-19 起） |
+| 本机 | `hphelm`（GMKtec G10）· Arch + X11 + lightdm(autologin) + bspwm + picom |
 | 公开镜像 | `github.com/zeroicey/hphelm-panel`（`origin`，public，无 license） |
-| 部署目标 | `hphelm`（GMKtec G10，ssh 别名 `hphelm`） |
+| 推代码 | ⚠️ **hphelm 的 GitHub 身份只够推 `dotfiles`**（deploy key 一仓一把）⇒ 从本机 `git push` 会权限失败。提交在本地做；推送要么等有账号级密钥的机器，要么给本仓加一把 write deploy key（未做） |
 | 二进制 | `/usr/local/bin/hphelm-panel` + `/usr/local/libexec/hphelm-auth`（4755 root:root） |
+| 上一版二进制 | `/usr/local/bin/hphelm-panel.prev`（`deploy.sh` 内容不同时自动留） |
 | 会话入口 | `/usr/local/bin/hphelm-session`（守护循环 + 日志轮转） |
 | 运行日志 | `/tmp/hphelm-panel.log`（会话启动时按大小轮转） |
 | PAM 服务 | `/etc/pam.d/hphelm-auth`（**专用**，只留 `pam_unix`） |
-| 机队事实权威 | `kb`（hpcore）`runbooks/hphelm.md`「运维面板」节 |
+| 机队事实权威 | `kb` 的 `runbooks/hphelm.md`「运维面板（hphelm-panel）」节（kb 主副本也在 hphelm：`/data/kb`） |
+| 项目记忆库 | `.ai/`（engram v0.5.0 初始化于 2026-10-21）· `engram dump` 出 ≤1.5 KB 指纹 |
+
+<!-- engram:managed -->
+
+<!-- engram:contract:start v1 -->
+## Project memory bank (`.ai/`) — required contract
+
+This repository keeps a portable, tool-independent memory bank in `.ai/`. It outranks chat
+history and your own recollection. Read it on demand with file tools; never paste it wholesale.
+
+### Read before you act
+
+1. `.ai/CURRENT_TASK.md` — the current goal, in-progress state and blockers. Read this first.
+2. Newest-first scan of `.ai/decisions/` for `💭 PROPOSAL` / `✅ ACCEPTED` entries that touch
+   your task. An accepted decision is binding; a proposal needs a verdict, not silent adoption.
+
+### Read on demand (trigger → file, not a bulk preload)
+
+| Trigger | Read |
+| --- | --- |
+| changing architecture, stack, module boundaries | `.ai/ARCHITECTURE.md` |
+| deploy, env vars, CI, incidents, ops | `.ai/runbooks/<topic>.md` |
+| a bug that feels familiar / "we fixed this before" | `.ai/pitfalls/cases/<case>.md` |
+| resuming after context loss, compaction or a long session | newest `.ai/sessions/*-handoff.md` |
+| brainstorming a direction, before writing code | `.ai/decisions/` (write a `💭 PROPOSAL`) |
+
+### Write back (not optional)
+
+| Event | Write |
+| --- | --- |
+| a choice that is expensive to reverse | `.ai/decisions/YYYY-MM-DD-<topic>.md` via `/remember-decision` |
+| a pitfall you hit, or a silent failure mode you decoded | `.ai/pitfalls/cases/<case>.md` via `/remember-pitfall` |
+| ending a session with unfinished or fragile work | `.ai/sessions/YYYY-MM-DD-<topic>-handoff.md` via `/handoff` |
+| any change to goal, state or blockers | `.ai/CURRENT_TASK.md` (same edit turn, never "later") |
+
+Rules of the bank:
+
+- One file per topic, `YYYY-MM-DD-<kebab-topic>.md`, status header on line 1 of the body:
+  `💭 PROPOSAL` → `✅ ACCEPTED` → `🪦 REJECTED`. Flip the status, never rewrite history.
+- Keep entries short and factual. The bank is an index of decisions, not a diary.
+- Canonical skill specs live in `.ai/skills/*.md`. If your tool can load them, load them; if
+  it cannot, this table is the fallback contract — follow it literally.
+- If the bank and the code disagree, the bank is stale: fix the bank in the same change.
+<!-- engram:contract:end -->

@@ -85,12 +85,12 @@ sudo make install    # → /usr/local/bin/hphelm-panel
                      # → /usr/local/libexec/hphelm-auth（4755 root:root，setuid）
 ```
 
-⚠️ **在 `hpcore`（本项目的源码宿主）上 make 会失败**：那台是无头服务器，没装 X 开发头文件。
-**编译与安装都在目标机 `hphelm` 上做** —— 这正是 `tools/deploy.sh` 负责的事（rsync → 远端 `make`）。
-在 hpcore 上能做的只有：读代码、改代码、跑 `tools/` 里的分析脚本（它们只依赖 python3 + ImageMagick）。
+⚠️ **构建必须在目标机 `hphelm` 上做**（需要 X 开发头文件；无头机器上 `make` 会失败）。
+**2026-10-19 起源码目录与部署目录是同一个**：`/data/dev/hphelm-panel`，所以现在没有 rsync ——
+`tools/deploy.sh` 就在本机构建、安装、重启、跑判据。
 
-部署到 `hphelm` 的完整流程（含红线守卫、回滚）见 **[`docs/deploy.md`](docs/deploy.md)**；
-一条命令的版本是 `tools/deploy.sh`。
+部署到 `hphelm` 的完整流程（含红线守卫、三层回滚、六件绝不能做的事）见 **[`docs/deploy.md`](docs/deploy.md)**；
+一条命令的版本是 `tools/deploy.sh`（`--check` 只读）。
 
 常用参数：
 
@@ -143,8 +143,10 @@ docs/               架构 / 设计 / 验证 / 坑 / 部署
 
 ## 相关
 
-- 机队视角的运维记录（部署位置、VT 守卫、红线）：`hpcore` 上 `kb` 仓库的 `runbooks/hphelm.md`
-  「运维面板（hphelm-panel）」节。**那是机队事实的权威来源**，本项目文档负责代码与设计。
+- 机队视角的运维记录（部署位置、VT 守卫、红线）：`kb` 仓库的 `runbooks/hphelm.md`
+  「运维面板（hphelm-panel）」节（kb 主副本在 `hphelm:/data/kb`）。**那是机队事实的权威来源**，
+  本项目文档负责代码与设计。
+- 项目记忆库：`.ai/`（`engram dump` 出 ≤1.5 KB 会话指纹；`engram doctor` 查漂移）。
 
 ## 真实可移植的做法
 

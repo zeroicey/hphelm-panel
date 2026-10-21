@@ -1,16 +1,16 @@
 # 交接：hphelm-panel（运维面板 + 自研锁屏）
 
-> **本轮状态（第五轮：立为独立项目）**：已从 `hphelm:~/projects/panel2` 整体搬到
-> **`hpcore:/data/dev/hphelm-panel`**（权威源码）并建成公开仓库 **`github.com/zeroicey/hphelm-panel`**；
-> 按「别人/另一个 AI 接手」的标准补齐材料：`AGENTS.md`（维护 AI 的工作指南）+
-> `docs/{architecture,design,verify,deploy,pitfalls}.md` + `tools/{measure.py,probe-frames,deploy.sh}`。
+> **本轮状态（第六轮：交接与部署链本土化，2026-10-21）**：`tools/deploy.sh` 从「rsync 到 hphelm
+> 再 ssh 上去」改成**本机原地部署**（旧路径在本机必失败）+ 七阶段判据；`docs/deploy.md`
+> 重写成「更新系统屏保」runbook；项目记忆库 **`.ai/`** 由 engram v0.5.0 初始化并填入内容。
 >
-> **前四轮成果一句话**：功能跑通（状态机 桌面↔面板↔登录）→ 消闪（离屏 pixmap + 一次 XCopyArea）→
-> 修掉我自己引入的 `NoExpose` 自激空转（CPU 33~49% → **0.60%**）→ UI 重做成
-> **无卡片紧凑版式 + 进程榜 40 条分列**。
+> **项目现在的形态**：源码目录 = 部署目录 = **`hphelm:/data/dev/hphelm-panel`**（2026-10-19 整仓迁入），
+> 公开镜像 `github.com/zeroicey/hphelm-panel`。
 >
-> **下一步**：用户看完真机观感后的反馈（第四节清单）。
-> 最后更新：2026-10-18（第五轮）。
+> **前五轮成果一句话**：功能跑通（桌面↔面板↔登录）→ 消闪（离屏 pixmap）→ 修掉自激空转
+> （CPU 33~49% → 0.60%）→ 无卡片紧凑版式 + 进程榜 40 条 → 立为独立项目（仓库 + 交接文档）。
+>
+> **最后更新：2026-10-21（第六轮）。**
 
 ---
 
@@ -24,14 +24,19 @@
 
 ## 一、30 秒上手
 
-**权威源码在 `hpcore:/data/dev/hphelm-panel`**（部署副本 **2026-10-19 起改为 `hphelm:/data/dev/hphelm-panel`**（home 里不再放代码；旧 `~/projects/panel2` 已随目录宪法消失））：
+**源码目录 = 部署目录 = `hphelm:/data/dev/hphelm-panel`**（2026-10-19 整仓迁入；旧的
+`hpcore:/data/dev/hphelm-panel` 与 `hphelm:~/projects/panel2` 都已不存在）：
 
 ```bash
 cd /data/dev/hphelm-panel
 make                     # 需 pkg-config: x11 x11-xcb xscrnsaver cairo cairo-xlib pangocairo
 tools/deploy.sh --check  # 看部署会做什么（只读）
-tools/deploy.sh          # rsync → hphelm 上 make → install → 重启面板 → 跑判据
+tools/deploy.sh          # 构建 → 备份旧二进制 → 安装 → 重启面板 → 跑判据（本机原地）
 ```
+
+⚠️ **必须在本机跑**：没有 rsync、不 ssh 自己连自己（本机 `~/.ssh/config` 没有 `hphelm` 这个 Host，
+`ssh hphelm` 直接 `Host key verification failed`）。屏幕更新怎么带走、怎么回滚、六件绝不能做的事，
+全在 **`docs/deploy.md`**。
 
 **先在隔离环境看效果**（不要一上来动真屏）：
 
@@ -153,6 +158,35 @@ magick /tmp/p.png -crop ... ; # 见 README 的方法
 lightdm+bspwm+picom、专用 PAM 服务、会话包装器、三条运维红线、Nerd Font、k10temp/nvme 设备路径、机队看板口径）
 逐项列出来，并在开头用 TL;DR 写明 **“This is not a drop-in product.”**
 ⇒ 外界能看懂「自绘、无工具包、低占用」这套**方法**可拿走，但「这份代码」要付适配成本。
+
+## 三·七、第六轮做完的事：**交接 + 部署链本土化（2026-10-21）**
+
+用户口径：「给 hphelm panel 交接如何部署更新项目屏保」「他们开发完也知道如何进行更新系统屏保不用麻烦你了」。
+
+| 项 | 做法 | 判据 |
+| --- | --- | --- |
+| **部署链本土化** | `tools/deploy.sh` 重写：**去掉 rsync 与 `ssh hphelm`**，改成七阶段原地部署（自检 → 构建 → 备份旧二进制 → 安装+校验 → `--dump` 语义自检 → 重启并确认 pid 变化 → 判据）。新增 `--check` / `--no-restart` | 本机三次真跑全过：VT=tty7 · greeter=0 · 面板=1 · 源码⇄已装逐字节一致 · 助手 `4755 root:root` · `sleep_off=off` · 帧差分 `0` 帧 >30% |
+| **回滚有凭据了** | 安装前若内容不同 ⇒ 自动留 `/usr/local/bin/hphelm-panel.prev` | 文档给出「三层回滚」（二进制 / 系统文件 / 退回 lightdm greeter） |
+| **`docs/deploy.md` 重写** | 从「rsync 到另一台机」改成 **「更新系统屏保」runbook**：屏保到底是什么 · 文件清单 · 开发循环 · 七阶段 · 判据表 · 三层回滚 · 六件绝不能做的事 · 交付清单 | 全文 10 节，命令均可直接粘贴 |
+| **项目记忆库 `.ai/`** | engram v0.5.0（本地构建 `/data/dev/engram/build/src/cli.js`）`init --root /data/dev/hphelm-panel --notes "…"` ⇒ `.ai/` + `.engram/` + `.agents/skills`，契约追加进 `AGENTS.md`（原有正文保留） | `engram doctor` / `engram dump` 通过；`.ai/CURRENT_TASK.md` · `ARCHITECTURE.md` · `runbooks/update-screensaver.md` · `decisions/` · `sessions/` 已填真实内容 |
+| **文档纠偏** | `AGENTS.md` §0/§4/§8/§9 与本文 §一：删掉「源码在 hpcore、部署到 hphelm」的旧事实；新增「接手第一小时读什么」 | — |
+
+**本轮我自己在 deploy.sh 第一版里踩的三个坑（都不报错，都已修）：**
+
+1. **`pgrep -qx` 不存在** —— procps 的 pgrep 没有 `-q` 选项，它报错并返回非 0 ⇒ 脚本却当成
+   「lightdm 没在跑」发了假告警。修法：`pgrep -x lightdm >/dev/null 2>&1`。
+2. **对 `/tmp/hphelm-panel.log` 全文件 grep 「连续 3 次」** ⇒ 2026-10-18 那两次事故的字符串一直
+   躺在日志里 ⇒ **每次部署都报「面板在反复崩」**。修法：只取**最近一条 `启动：` 之后**的日志块。
+3. **CPU 窗口包含了刚启动的几秒**（启动帧全额重绘 + 首次扫进程）⇒ 读出 1.60%，而稳态是 1.1~1.4%。
+   修法：先热身 3 秒再开 15 秒窗口。
+
+**⚠️ 一个待查的真问题**：CPU 实测 **1.13%–1.60%**，高于文档记录 0.60%（2026-10-18）。
+其余判据全绿（不闪、不空转、几何对、单实例）。清楚到代码里的假设**不要凭猜** ——
+正解是用 `HPHELM_PANEL_DEBUG=1` 看 it/s 与各阶段耗时，先把「重绘次数」与「单帧耗时」分开。
+
+**⚠️ 一个未解的交付缺口**：hphelm 的 GitHub 身份**只够推 `dotfiles`**（deploy key 一仓一把），
+所以本机 `git push origin main` 会权限失败。本轮提交只落在本地；要么另找有账号级密钥的机器推，
+要么在本仓加一把 write deploy key（需有人在 GitHub 网页/带 `repo` 权限的 token 上操作）。
 
 ## 四、已知粗糙点（下一轮的候选）
 
@@ -320,9 +354,11 @@ journalctl -t hphelm-vt-guard -n 3                     # 应看到「抢到 tty8
 
 ---
 
-## 九、下一轮开工前请先读
+## 九、下一轮开工前请先读（2026-10-21 更新）
 
-- `hpcore:/data/dev/hphelm-panel/README.md`（本项目自述：行为、选型实测表、安全模型、6 个坑）
-- kb `runbooks/hphelm.md` 的「运维面板（hphelm-panel）」节（机队视角 + 验收判据）
+- `.ai/CURRENT_TASK.md`（此刻在做什么 / 卡在哪 / 下一步）——`engram dump` 也能一行拿到指纹
+- **`docs/deploy.md`**（更新系统屏保：七阶段、判据表、三层回滚、六件绝不能做的事）
+- `README.md`（本项目自述：行为、选型实测表、安全模型、六条适配前提）
+- kb `runbooks/hphelm.md` 的「运维面板（hphelm-panel）」节（机队视角 + 验收判据；kb 在 `hphelm:/data/kb`）
 - kb 两个坑档：`2026-10-18-lockscreen-auth-reusing-login-pam-stack-*`、
   `2026-10-18-fullscreen-override-redirect-overlay-traps`

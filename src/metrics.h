@@ -45,6 +45,11 @@ typedef struct {
     /* 内存 */
     double mem_total_mb, mem_used_mb, mem_pct;
     double swap_total_mb, swap_used_mb, swap_pct;
+    double mem_cached_mb;   /* Buffers + Cached + SReclaimable（可回收内存） */
+    /* 系统压力 PSI（读 /proc/pressure 下三个文件，取 avg10，百分比） */
+    double psi_cpu, psi_mem, psi_io;
+    int nthr;               /* 线程总数（来自 /proc/loadavg 的 1/N） */
+    int nrunning;           /* 当前可运行线程数 */
     /* 磁盘 */
     double disk_used_pct, disk_total_gb, disk_free_gb;
     double ssd_read_gb, ssd_written_gb;
@@ -54,6 +59,8 @@ typedef struct {
     char ip[40];
     int net_up;
     double rx_bps, tx_bps;
+    double rx_total_mb, tx_total_mb;   /* 累计（自开机） */
+    long net_err, net_drop;            /* 错误包 / 丢弃包累计 */
     char ts_ip[40];
     int ts_up;
     /* 进程 */
@@ -67,6 +74,7 @@ typedef struct {
     ring_t mem_hist;
     ring_t rx_hist;
     ring_t tx_hist;
+    ring_t temp_hist;
 } host_metrics_t;
 
 /* 兼容旧名字（本机采集层与视图本来都叫 metrics_t） */

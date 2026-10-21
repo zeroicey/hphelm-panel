@@ -55,6 +55,17 @@ double v_text_right_w(cairo_t *cr, double xr, double y, PangoFontDescription *fd
                       const char *fmt, ...);
 /* 该字体下单个等宽字符的宽度（字体是等宽的 ⇒ 一次测量可反复用） */
 double v_char_w(PangoFontDescription *fd);
+/* 右对齐并输出「墨迹（真实文字像素）中线相对 y 的偏移」与宽度。
+ * 画状态圆点必须用它：用参考字符串估算会差 1~2 像素（CJK 与拉丁的下伸部不同），
+ * 而用户一眼就能看出圆点没对齐文字。 */
+void v_text_right_ex(cairo_t *cr, double xr, double y, PangoFontDescription *fd, uint32_t rgb,
+                     double *w_out, double *mid_out, const char *fmt, ...);
+/* 该字体「视觉中线」相对 layout 顶部的偏移量（逻辑像素）。
+ * 画状态小圆点/徽标时必须用它 —— 直接写 y+8 这种经验值会让圆点偏高或偏低，
+ * 而字体的 ascent/descent 会随字号变化（实测 9pt 的视觉中线在 y+7.5，11pt 在 y+9）。 */
+double v_text_mid(PangoFontDescription *fd);
+/* 画一个实心圆点（圆心给绝对 y） */
+void v_dot_at_text(cairo_t *cr, double cx, double cy, double r, uint32_t rgb);
 /* 按宽度把名字截断成「前缀…」，**不会把 UTF-8 多字节字符切一半**
  * （切一半 pango 会画出豆腐块或直接不画 —— 静默错误，肉眼以外很难发现）。
  * 用等宽字体按字符宽估算，不做逐字符测量（那会让单帧绘制时间翻倍）。 */

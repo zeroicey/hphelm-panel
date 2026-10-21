@@ -119,6 +119,38 @@ double v_char_w(PangoFontDescription *fd) {
     return w;
 }
 
+double v_text_mid(PangoFontDescription *fd) {
+    /* 用「有上伸部 + 下伸部的拉丁字母」量视觉中心：中文/数字的墨迹大致落在同一条带上 */
+    layout_prepare(fd, "Ag|0");
+    PangoRectangle ink;
+    pango_layout_get_pixel_extents(g_lay, &ink, NULL);
+    return (double)ink.y + (double)ink.height / 2.0;
+}
+
+void v_text_right_ex(cairo_t *cr, double xr, double y, PangoFontDescription *fd, uint32_t rgb,
+                     double *w_out, double *mid_out, const char *fmt, ...) {
+    char buf[1024];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(buf, sizeof buf, fmt, ap);
+    va_end(ap);
+    double w = layout_prepare(fd, buf);
+    if (mid_out) {
+        /* 用**这次真实的排版结果**取墨迹 extents，不做任何估算 */
+        PangoRectangle ink;
+        pango_layout_get_extents(g_lay, &ink, NULL);
+        *mid_out = (double)ink.y / PANGO_SCALE + (double)ink.height / PANGO_SCALE / 2.0;
+    }
+    if (w_out) *w_out = w;
+    layout_show(cr, xr - w, y, rgb);
+}
+
+void v_dot_at_text(cairo_t *cr, double cx, double cy, double r, uint32_t rgb) {
+    cairo_arc(cr, cx, cy, r, 0, 2 * M_PI);
+    v_set_rgb(cr, rgb, 1.0);
+    cairo_fill(cr);
+}
+
 void v_truncate_mono(char *out, size_t outn, const char *name, PangoFontDescription *fd,
                      double maxw) {
     double chw = v_char_w(fd);

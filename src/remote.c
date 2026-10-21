@@ -183,13 +183,17 @@ static double tdouble(const char *s) { return s ? strtod(s, NULL) : 0; }
 static long tlong(const char *s) { return s ? strtol(s, NULL, 10) : 0; }
 
 /* S <ts> <host> <cpu%> <ncore> <uptime> <memT> <memU> <swapT> <swapU> <disk%:GB>
- *   <rxBps> <txBps> <tempC> <l1> <l5> <l15> <freqMHz> <dock> <nproc> <gov> <iface> <ip> */
+ *   <rxBps> <txBps> <tempC> <l1> <l5> <l15> <freqMHz> <dock> <nproc> <gov> <iface> <ip>
+ *   [追加段，可缺] <memCachedMB> <psiCpu> <psiMem> <psiIo> <nthreads> <rxTotalMB>
+ *                  <txTotalMB> <netErr> <netDrop>
+ * ⚠️ 追加段一律**可选**：老探针（只发 22 个字段）也要能跑，缺的就留 0。 */
+#define S_MAX_FIELDS 32
 static void parse_S(metrics_t *m, char *rest) {
-    char *t[24];
+    char *t[S_MAX_FIELDS];
     int n = 0;
     char *p = rest, *o;
-    while (n < 24 && tok(&p, &o)) t[n++] = o;
-    if (n < 22) return; /* 字段不全 ⇒ 丢掉这行（探针与本程序的版本不匹配）
+    while (n < S_MAX_FIELDS && tok(&p, &o)) t[n++] = o;
+    if (n < 22) return; /* 基础字段不全 ⇒ 丢掉这行（探针与本程序的版本不匹配）
                            ⚠️ 参数顺序改了就改这里，同时改 tools/probe-remote.pl 的 printf */
     m->now = (time_t)tlong(t[0]);
     snprintf(m->host, sizeof m->host, "%s", t[1]);
@@ -275,10 +279,12 @@ static int commit(remote_t *r, double now) {
     s->mem_hist = r->m.mem_hist;
     s->rx_hist = r->m.rx_hist;
     s->tx_hist = r->m.tx_hist;
+    s->temp_hist = r->m.temp_hist;
     ring_push(&s->cpu_hist, s->cpu_pct);
     ring_push(&s->mem_hist, s->mem_pct);
     ring_push(&s->rx_hist, s->rx_bps);
     ring_push(&s->tx_hist, s->tx_bps);
+    if (s->temp_c >= 0) ring_push(&s->temp_hist, s->temp_c);
     r->m = *s;
     r->last_frame = now;
     r->saw_frame = 1;

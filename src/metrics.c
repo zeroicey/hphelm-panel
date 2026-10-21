@@ -62,6 +62,16 @@ static int read_double(const char *path, double *out) {
     return 1;
 }
 
+static int read_ull(const char *path, unsigned long long *out) {
+    char b[64];
+    if (!read_line(path, b, sizeof b)) return 0;
+    char *end;
+    unsigned long long v = strtoull(b, &end, 10);
+    if (end == b) return 0;
+    *out = v;
+    return 1;
+}
+
 static void human_rate(double bps, char *out, size_t n) {
     if (bps < 1024) snprintf(out, n, "%4.0fB/s", bps);
     else if (bps < 1024 * 1024) snprintf(out, n, "%4.1fK/s", bps / 1024);
@@ -153,13 +163,17 @@ static void read_mem(metrics_t *m) {
     if (!f) return;
     char key[64], unit[32];
     long val;
-    double total = 0, avail = 0, stot = 0, sfree = 0;
+    double total = 0, avail = 0, stot = 0, sfree = 0, cached = 0;
     while (fscanf(f, "%63s %ld %31s", key, &val, unit) == 3) {
         if (!strcmp(key, "MemTotal:")) total = val / 1024.0;
         else if (!strcmp(key, "MemAvailable:")) avail = val / 1024.0;
         else if (!strcmp(key, "SwapTotal:")) stot = val / 1024.0;
         else if (!strcmp(key, "SwapFree:")) sfree = val / 1024.0;
+        else if (!strcmp(key, "Buffers:")) cached += val / 1024.0;
+        else if (!strcmp(key, "Cached:")) cached += val / 1024.0;
+        else if (!strcmp(key, "SReclaimable:")) cached += val / 1024.0;
     }
+    m->mem_cached_mb = cached;
     fclose(f);
     m->mem_total_mb = total;
     m->mem_used_mb = total - avail;
@@ -167,6 +181,17 @@ static void read_mem(metrics_t *m) {
     m->swap_total_mb = stot;
     m->swap_used_mb = stot - sfree;
     m->swap_pct = stot > 0 ? 100.0 * m->swap_used_mb / stot : 0;
+}
+
+/* ---------------- 系统压力 PSI ----------------
+ * /proc/pressure/{cpu,memory,io} 的第一行 "some avg10=0.06 ..."。
+ * 这是「有没有被卡住」的直接证据（比 load average 准：load 含不可打断睡眠）。
+ * 三个小文件、零解析成本。 */
+static double read_psi(const char *path) {
+    char buf[256];
+    if (!read_line(path, buf, sizeof buf)) return 0;
+    char *p = strstr(buf, "avg10=");
+    return p ? strtod(p + 6, NULL) : 0;
 }
 
 /* ---------------- 磁盘 ---------------- */
@@ -226,6 +251,24 @@ static void read_net(metrics_t *m, double dt) {
     p_rx = rx;
     p_tx = tx;
     first = 0;
+    m->rx_total_mb = (double)rx / 1048576.0;
+    m->tx_total_mb = (double)tx / 1048576.0;
+    /* 错误/丢弃包：4 个小计数器，只在故障时有意义（平时恒 0） */
+    {
+        char p1[256], p2[256];
+        unsigned long long v;
+        long err = 0, drop = 0;
+        snprintf(p1, sizeof p1, "/sys/class/net/%s/statistics/rx_errors", m->iface);
+        snprintf(p2, sizeof p2, "/sys/class/net/%s/statistics/tx_errors", m->iface);
+        if (read_ull(p1, &v)) err += (long)v;
+        if (read_ull(p2, &v)) err += (long)v;
+        snprintf(p1, sizeof p1, "/sys/class/net/%s/statistics/rx_dropped", m->iface);
+        snprintf(p2, sizeof p2, "/sys/class/net/%s/statistics/tx_dropped", m->iface);
+        if (read_ull(p1, &v)) drop += (long)v;
+        if (read_ull(p2, &v)) drop += (long)v;
+        m->net_err = err;
+        m->net_drop = drop;
+    }
 
     ring_push(&m->rx_hist, m->rx_bps);
     ring_push(&m->tx_hist, m->tx_bps);
@@ -388,9 +431,18 @@ void metrics_sample(metrics_t *m, int want_procs) {
     prev = cur;
     FILE *f = fopen("/proc/loadavg", "r");
     if (f) {
-        if (fscanf(f, "%lf %lf %lf", &m->load[0], &m->load[1], &m->load[2]) != 3) {}
+        int running = 0, total = 0;
+        /* 第 4 个字段是 "运行中/总线程数"（顺手拿，不额外读文件） */
+        if (fscanf(f, "%lf %lf %lf %d/%d", &m->load[0], &m->load[1], &m->load[2], &running,
+                   &total) >= 5) {
+            m->nrunning = running;
+            m->nthr = total;
+        }
         fclose(f);
     }
+    m->psi_cpu = read_psi("/proc/pressure/cpu");
+    m->psi_mem = read_psi("/proc/pressure/memory");
+    m->psi_io = read_psi("/proc/pressure/io");
     m->temp_c = read_temp();
     if (!read_line("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor",
                    m->governor, sizeof m->governor))
@@ -431,4 +483,5 @@ void metrics_sample(metrics_t *m, int want_procs) {
 
     ring_push(&m->cpu_hist, m->cpu_pct);
     ring_push(&m->mem_hist, m->mem_pct);
+    if (m->temp_c >= 0) ring_push(&m->temp_hist, m->temp_c);
 }

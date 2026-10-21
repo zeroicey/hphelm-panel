@@ -8,6 +8,8 @@
 # 输出契约（1 Hz，stdout 只允许下面四行；解析器在 src/remote.c）：
 #   S <ts> <host> <cpu%> <ncore> <uptime> <memT> <memU> <swapT> <swapU> <disk%> <diskGB>
 #     <rxBps> <txBps> <tempC> <load1> <load5> <load15> <freqMHz> <dock> <nproc> <gov> <iface> <ip>
+#     <memCachedMB> <psiCpu> <psiMem> <psiIo> <nthreads> <rxTotalMB> <txTotalMB> <netErr> <netDrop>
+#   ⚠️ 新字段**只能追加在末尾**：解析器对缺失字段取 0，老探针 + 新面板不会崩。
 #   C <core0%> <core1%> ...           （ncore 个）
 #   P <nproc> <pid>:<rssMiB>:<name>,...   （每 3 秒一次，最多 24 条）
 #   E                                  （一帧结束 ⇒ 只有收到 E 才提交，半帧不会被显示）
@@ -103,6 +105,13 @@ sub iface_ip {
     return ($best, $ip);
 }
 
+# PSI：/proc/pressure/{cpu,memory,io} 第一行的 avg10
+sub psi {
+    my ($p) = @_;
+    my $c = slurp($p) // return 0;
+    return $c =~ /some\s+avg10=([\d.]+)/ ? $1 : 0;
+}
+
 # 温度：按名字找 k10temp（别写死 hwmonN）
 my $tempfile;
 for my $h (glob '/sys/class/hwmon/hwmon*') {
@@ -185,16 +194,38 @@ while (1) {
     if ($iter % 3 == 0) { ($nproc, $top) = procs(); $nproc_last = $nproc if $nproc ne '' }
     $nproc = $nproc_last // 0 if $nproc eq '';
 
+    # 线程总数：/proc/loadavg 第 4 字段 "运行中/总数"
+    my ($nthr) = ($load =~ m{/\s*(\d+)}) ? $1 : 0;
+
+    # 网卡错误/丢弃（4 个小计数器）
+    my ($rx_total, $tx_total) = ($rx / 1048576.0, $tx / 1048576.0);
+    my ($nerr, $ndrop) = (0, 0);
+    for my $k (qw(rx_errors tx_errors)) {
+        my $v = slurp("/sys/class/net/$iface/statistics/$k");
+        $nerr += $v if defined $v;
+    }
+    for my $k (qw(rx_dropped tx_dropped)) {
+        my $v = slurp("/sys/class/net/$iface/statistics/$k");
+        $ndrop += $v if defined $v;
+    }
+
+    my $psi_cpu = psi('/proc/pressure/cpu');
+    my $psi_mem = psi('/proc/pressure/memory');
+    my $psi_io  = psi('/proc/pressure/io');
+    my $mem_cached = (($mi{Buffers} // 0) + ($mi{Cached} // 0) + ($mi{SReclaimable} // 0)) / 1024;
+
     my $mem_total = ($mi{MemTotal} // 0) / 1024;
     my $mem_avail = ($mi{MemAvailable} // 0) / 1024;
     my $sw_total  = ($mi{SwapTotal} // 0) / 1024;
     my $sw_free   = ($mi{SwapFree} // 0) / 1024;
 
-    printf "S %d %s %.1f %d %.0f %.0f %.0f %.0f %.0f %s %.1f %.1f %.1f %s %s %s %.0f %d %d %s %s %s\n",
+    printf "S %d %s %.1f %d %.0f %.0f %.0f %.0f %.0f %s %.1f %.1f %.1f %s %s %s %.0f %d %d %s %s %s"
+         . " %.0f %.1f %.1f %.1f %d %.0f %.0f %d %d\n",
         time, $host, $cpu, $ncore // 0, $uptime,
         $mem_total, $mem_total - $mem_avail, $sw_total, $sw_total - $sw_free,
         $disk, $rx_bps, $tx_bps, $temp, $l1, $l5, $l15,
-        $freqk / 1000, $dock, $nproc, $gov, $iface, $ip;
+        $freqk / 1000, $dock, $nproc, $gov, $iface, $ip,
+        $mem_cached, $psi_cpu, $psi_mem, $psi_io, $nthr, $rx_total, $tx_total, $nerr, $ndrop;
     print 'C ', join(' ', @core), "\n";
     print "P $nproc $top\n" if $top ne '';
     print "E\n";

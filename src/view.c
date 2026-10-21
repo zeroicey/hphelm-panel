@@ -51,6 +51,24 @@ double v_text_w(PangoFontDescription *fd, const char *s) {
     return (double)r.width / PANGO_SCALE;
 }
 
+/* 排版一次 = 一次 pango 整形。实测一帧要整形 100+ 次（两台主机 + 24 行进程），
+ * 每帧 5~10ms ⇒ 1 Hz 重绘就是 0.5~1% of one core。
+ * ⚠️ 所以「右对齐/居中」**必须复用这一次排版**去取宽度：
+ *    不要先 v_text_w() 量一遍、再 v_text() 排一遍（两倍整形，实测绘制时间 +40%）。 */
+static double layout_prepare(PangoFontDescription *fd, const char *buf) {
+    pango_layout_set_font_description(g_lay, fd);
+    pango_layout_set_text(g_lay, buf, -1);
+    PangoRectangle r;
+    pango_layout_get_extents(g_lay, NULL, &r);
+    return (double)r.width / PANGO_SCALE;
+}
+
+static void layout_show(cairo_t *cr, double x, double y, uint32_t rgb) {
+    v_set_rgb(cr, rgb, 1.0);
+    cairo_move_to(cr, x, y);
+    pango_cairo_show_layout(cr, g_lay);
+}
+
 double v_text(cairo_t *cr, double x, double y, PangoFontDescription *fd, uint32_t rgb,
               const char *fmt, ...) {
     char buf[1024];
@@ -58,14 +76,9 @@ double v_text(cairo_t *cr, double x, double y, PangoFontDescription *fd, uint32_
     va_start(ap, fmt);
     vsnprintf(buf, sizeof buf, fmt, ap);
     va_end(ap);
-    pango_layout_set_font_description(g_lay, fd);
-    pango_layout_set_text(g_lay, buf, -1);
-    PangoRectangle r;
-    pango_layout_get_extents(g_lay, NULL, &r);
-    v_set_rgb(cr, rgb, 1.0);
-    cairo_move_to(cr, x, y);
-    pango_cairo_show_layout(cr, g_lay);
-    return (double)r.width / PANGO_SCALE;
+    double w = layout_prepare(fd, buf);
+    layout_show(cr, x, y, rgb);
+    return w;
 }
 
 void v_text_right(cairo_t *cr, double xr, double y, PangoFontDescription *fd, uint32_t rgb,
@@ -75,7 +88,53 @@ void v_text_right(cairo_t *cr, double xr, double y, PangoFontDescription *fd, ui
     va_start(ap, fmt);
     vsnprintf(buf, sizeof buf, fmt, ap);
     va_end(ap);
-    v_text(cr, xr - v_text_w(fd, buf), y, fd, rgb, "%s", buf);
+    double w = layout_prepare(fd, buf);
+    layout_show(cr, xr - w, y, rgb);
+}
+
+double v_text_right_w(cairo_t *cr, double xr, double y, PangoFontDescription *fd, uint32_t rgb,
+                      const char *fmt, ...) {
+    char buf[1024];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(buf, sizeof buf, fmt, ap);
+    va_end(ap);
+    double w = layout_prepare(fd, buf);
+    layout_show(cr, xr - w, y, rgb);
+    return w;
+}
+
+/* 等宽字体：量 10 个 M 再除 10（比逐字符测量便宜一个数量级） */
+double v_char_w(PangoFontDescription *fd) {
+    static struct { PangoFontDescription *fd; double w; } cache[8];
+    static int n;
+    for (int i = 0; i < n; i++)
+        if (cache[i].fd == fd) return cache[i].w;
+    double w = v_text_w(fd, "MMMMMMMMMM") / 10.0;
+    if (n < 8) {
+        cache[n].fd = fd;
+        cache[n].w = w;
+        n++;
+    }
+    return w;
+}
+
+void v_truncate_mono(char *out, size_t outn, const char *name, PangoFontDescription *fd,
+                     double maxw) {
+    double chw = v_char_w(fd);
+    if (chw <= 0.1) chw = 8.0;
+    int maxch = (int)(maxw / chw);
+    if (maxch < 4) maxch = 4;
+    int n = (int)strlen(name);
+    if (n <= maxch) {
+        snprintf(out, outn, "%s", name);
+        return;
+    }
+    int cut = maxch - 1;
+    if (cut < 1) cut = 1;
+    /* 退到 UTF-8 字符边界（0x80..0xBF 是续字节，不能当结尾） */
+    while (cut > 0 && ((unsigned char)name[cut] & 0xC0) == 0x80) cut--;
+    snprintf(out, outn, "%.*s…", cut, name);
 }
 
 void v_text_center(cairo_t *cr, double cx, double y, PangoFontDescription *fd, uint32_t rgb,
@@ -85,7 +144,8 @@ void v_text_center(cairo_t *cr, double cx, double y, PangoFontDescription *fd, u
     va_start(ap, fmt);
     vsnprintf(buf, sizeof buf, fmt, ap);
     va_end(ap);
-    v_text(cr, cx - v_text_w(fd, buf) / 2.0, y, fd, rgb, "%s", buf);
+    double w = layout_prepare(fd, buf);
+    layout_show(cr, cx - w / 2.0, y, rgb);
 }
 
 /* ---------------- 版式基元 ---------------- */

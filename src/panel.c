@@ -20,6 +20,7 @@
  *
  * 用法： hphelm-panel [--scale N] [--panel-idle S] [--login-back S]
  *                     [--input-grace S] [--sleep-off S] [--dump] [--once]
+ *                     [--remote HOST]  （生产服务器：ssh 目标；空/缺省 = 不采集）
  *                     [--state desktop|panel|login]   （测试用：强制初始状态）
  *                     [--lock PATH]                   （单实例锁路径，默认 /tmp/hphelm-panel.lock）
  */
@@ -47,6 +48,7 @@
 
 #include "auth.h"
 #include "metrics.h"
+#include "remote.h"
 #include "theme.h"
 #include "view.h"
 
@@ -67,13 +69,36 @@ static double CFG_PANEL_IDLE = 180;   /* 桌面空闲多久进面板 */
 static double CFG_LOGIN_BACK = 120;   /* 登录页空闲多久回面板 */
 static double CFG_INPUT_GRACE = 1.2;  /* 进面板后多久才接受“唤醒”（防误触） */
 static double CFG_SLEEP_OFF = 0;      /* 面板空闲多久关屏；**0 或负数 = 永不关屏**（当前默认） */
+static char CFG_REMOTE[64] = "";      /* 生产服务器 ssh 目标；空 = 不采集（默认） */
+/* 配置文件：**改主机名不该需要编辑 root 的会话包装器**（那是 /usr/local/bin 下的 root 文件，
+ * 而且改了还得重启整个会话才生效）。优先级：--remote > HPHELM_REMOTE > 本文件。
+ * 格式：一行一个 key=value，`#` 注释，只认 remote=。 */
+static const char *CFG_FILE = "/etc/hphelm-panel.conf";
 static int FORCE_STATE = -1;
 static int DBG = 0;               /* HPHELM_PANEL_DEBUG=1：每秒打印主循环仪表 */
 static long dbg_iter, dbg_ev, dbg_poll_rd, dbg_poll_to, dbg_poll_oth, dbg_redraw, dbg_sample;
+static long dbg_remote_frames;
 static long dbg_evtype[64];
 static double dbg_ms_render, dbg_ms_blit, dbg_ms_sig;
 
 static const char *CFG_LOCK = "/tmp/hphelm-panel.lock";  /* 单实例锁（--lock 可换，便于 Xvfb 并行测试） */
+
+/* 读配置文件里的 remote=（找不到文件就静默跳过） */
+static void read_conf_file(void) {
+    FILE *f = fopen(CFG_FILE, "r");
+    if (!f) return;
+    char line[256];
+    while (fgets(line, sizeof line, f)) {
+        char *p = line;
+        while (*p == ' ' || *p == '\t') p++;
+        if (*p == '#' || *p == '\n' || !*p) continue;
+        if (strncmp(p, "remote=", 7) != 0) continue;
+        char *v = p + 7;
+        v[strcspn(v, " \t\r\n")] = 0;
+        if (v[0] && !CFG_REMOTE[0]) snprintf(CFG_REMOTE, sizeof CFG_REMOTE, "%s", v);
+    }
+    fclose(f);
+}
 
 /* 关屏阈值的人类可读形式（0 ⇒ 永不关屏），日志/--dump 共用 */
 static void sleep_off_desc(char *buf, size_t n) {
@@ -88,9 +113,12 @@ static int SW = 1920, SH = 1080;
 static cairo_surface_t *surf;
 static cairo_t *cr;
 static PangoLayout *lay;
-static metrics_t M;
+static metrics_t M;              /* 本机 */
+static remote_t R;               /* 生产服务器（--remote；未配置时 enabled=0） */
+static view_feed_t FEED;         /* 给视图看的采集健康度 */
 static int scr;
 static Pixmap back;                /* 离屏后备缓冲（X 服务器端 pixmap，双缓冲用） */
+static Pixmap bgpix;               /* 渐变底（整屏画一次，每帧 XCopyArea 复制过来） */
 static GC blitgc;                  /* 一次 XCopyArea 上屏用的 GC */
 static unsigned long long g_sig;   /* 上一帧内容签名（内容没变就不重绘） */
 static int g_sig_valid;
@@ -156,12 +184,30 @@ static void blit(void);
 static void redraw(void);
 static void redraw_force(void);
 
+/* 背景 pixmap：整屏渐变只画一次。
+ * ⚠️ 实测每帧重画整屏渐变要 4~5ms（cairo 的 pattern 在 Xlib 表面上会掉进客户端渲染），
+ *    1 Hz 就是白吃 0.5% of one core。改成「画一次 + 每帧服务器端 XCopyArea」后
+ *    这一段降到几乎为 0（和上屏用的 blit 同一条路径）。 */
+static void bg_init(void) {
+    if (bgpix) { XFreePixmap(dpy, bgpix); bgpix = 0; }
+    bgpix = XCreatePixmap(dpy, root, (unsigned)SW, (unsigned)SH,
+                          (unsigned)DefaultDepth(dpy, scr));
+    cairo_surface_t *bs = cairo_xlib_surface_create(dpy, bgpix, DefaultVisual(dpy, scr), SW, SH);
+    cairo_t *bcr = cairo_create(bs);
+    cairo_scale(bcr, SCALE, SCALE);
+    v_bg(bcr, SW / SCALE, SH / SCALE);
+    cairo_destroy(bcr);
+    cairo_surface_flush(bs);
+    cairo_surface_destroy(bs);
+}
+
 static void surface_init(void) {
     if (cr) { cairo_destroy(cr); cr = NULL; }
     if (surf) { cairo_surface_destroy(surf); surf = NULL; }
     if (back) { XFreePixmap(dpy, back); back = 0; }
     back = XCreatePixmap(dpy, root, (unsigned)SW, (unsigned)SH,
                          (unsigned)DefaultDepth(dpy, scr));
+    bg_init();
     surf = cairo_xlib_surface_create(dpy, back, DefaultVisual(dpy, scr), SW, SH);
     cr = cairo_create(surf);
     lay = pango_cairo_create_layout(cr);
@@ -232,11 +278,19 @@ static unsigned long long content_sig(void) {
     unsigned long long h = 1469598103934665603ULL; /* FNV-1a 64 */
     const unsigned char *p = (const unsigned char *)&M;
     for (size_t i = 0; i < sizeof M; i++) { h ^= p[i]; h *= 1099511628211ULL; }
+    /* 远端的快照也要进签名：否则「本机没变、远端变了」的秒里画面不更新 */
+    if (R.enabled) {
+        p = (const unsigned char *)&R.m;
+        for (size_t i = 0; i < sizeof R.m; i++) { h ^= p[i]; h *= 1099511628211ULL; }
+    }
 #define MIX(v) do { h ^= (unsigned long long)(v); h *= 1099511628211ULL; } while (0)
     MIX(state);
     MIX(pwlen);
     MIX(busy);
     MIX(cursor_on);
+    MIX(FEED.online);
+    /* 离线秒数按**整秒**入签名：远端一断，屏幕要能持续走「离线 Ns」而不是冻住 */
+    MIX(FEED.age_s >= 0 ? (long)FEED.age_s : -1L);
     MIX(retry_at > 0 ? retry_at - (int)now_s() : 0);
     for (const unsigned char *e = (const unsigned char *)g_err; *e; e++) {
         h ^= *e;
@@ -249,11 +303,17 @@ static unsigned long long content_sig(void) {
 /* 把当前状态画进离屏后备缓冲（不碰窗口） */
 static void render(void) {
     if (state == ST_DESKTOP) return;
-    view_ctx_t v = {.scale = SCALE, .lw = SW / SCALE, .lh = SH / SCALE};
+    /* 先铺底（服务器端 blit，不经过像素），再让 cairo 在最上面画内容 */
+    if (bgpix) {
+        cairo_surface_flush(surf);
+        XCopyArea(dpy, bgpix, back, blitgc, 0, 0, (unsigned)SW, (unsigned)SH, 0, 0);
+        cairo_surface_mark_dirty(surf);
+    }
+    view_ctx_t v = {.scale = SCALE, .lw = SW / SCALE, .lh = SH / SCALE, .bg_done = bgpix != 0};
     cairo_save(cr);
     cairo_scale(cr, SCALE, SCALE);
     if (state == ST_PANEL) {
-        view_panel_draw(cr, &v, &M);
+        view_panel_draw(cr, &v, &M, R.enabled ? &R.m : NULL, &FEED);
     } else {
         int wait = (retry_at > 0) ? (int)(retry_at - now_s()) : 0;
         if (wait < 0) wait = 0;
@@ -399,8 +459,9 @@ static void dbg_tick(void) {
     if (t - t_last < 1.0) return;
     char buf[512];
     int n = snprintf(buf, sizeof buf, "主循环 %.0f it/s · 事件 %ld · poll[可读 %ld/超时 %ld/其他 %ld] · "
-                     "重绘 %ld · 采样 %ld · 类型:", dbg_iter / (t - t_last), dbg_ev,
-                     dbg_poll_rd, dbg_poll_to, dbg_poll_oth, dbg_redraw, dbg_sample);
+                     "重绘 %ld · 采样 %ld · 远端帧 %ld · 类型:", dbg_iter / (t - t_last), dbg_ev,
+                     dbg_poll_rd, dbg_poll_to, dbg_poll_oth, dbg_redraw, dbg_sample,
+                     dbg_remote_frames);
     static const char *tn[] = {"?", "?", "KeyPress", "KeyRelease", "ButtonPress", "ButtonRelease",
                                "MotionNotify", "EnterNotify", "LeaveNotify", "FocusIn", "FocusOut",
                                "KeymapNotify", "Expose", "GraphicsExpose", "NoExpose",
@@ -434,6 +495,7 @@ static void dbg_tick(void) {
     dbg_ms_sig = dbg_ms_render = dbg_ms_blit = 0;
     t_last = t;
     dbg_iter = dbg_ev = dbg_poll_rd = dbg_poll_to = dbg_poll_oth = dbg_redraw = dbg_sample = 0;
+    dbg_remote_frames = 0;
     memset(dbg_evtype, 0, sizeof dbg_evtype);
 }
 
@@ -448,6 +510,8 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--login-back") && i + 1 < argc) CFG_LOGIN_BACK = atof(argv[++i]);
         else if (!strcmp(argv[i], "--input-grace") && i + 1 < argc) CFG_INPUT_GRACE = atof(argv[++i]);
         else if (!strcmp(argv[i], "--sleep-off") && i + 1 < argc) CFG_SLEEP_OFF = atof(argv[++i]);
+        else if (!strcmp(argv[i], "--remote") && i + 1 < argc)
+            snprintf(CFG_REMOTE, sizeof CFG_REMOTE, "%s", argv[++i]);
         else if (!strcmp(argv[i], "--lock") && i + 1 < argc) CFG_LOCK = argv[++i];
         else if (!strcmp(argv[i], "--state") && i + 1 < argc) {
             if (!strcmp(argv[i + 1], "desktop")) FORCE_STATE = ST_DESKTOP;
@@ -461,7 +525,15 @@ int main(int argc, char **argv) {
     signal(SIGUSR2, on_sig); /* 立即回面板 */
     signal(SIGPIPE, SIG_IGN);
     DBG = getenv("HPHELM_PANEL_DEBUG") != NULL;
+    /* 生产服务器优先级：--remote > $HPHELM_REMOTE > /etc/hphelm-panel.conf */
+    if (!CFG_REMOTE[0]) read_conf_file();
+    if (!CFG_REMOTE[0] && getenv("HPHELM_REMOTE"))
+        snprintf(CFG_REMOTE, sizeof CFG_REMOTE, "%s", getenv("HPHELM_REMOTE"));
     metrics_init(&M);
+    remote_init(&R, CFG_REMOTE);
+    FEED.enabled = R.enabled;
+    FEED.age_s = -1;
+    snprintf(FEED.target, sizeof FEED.target, "%s", R.target);
     auth_default_user(g_user, sizeof g_user);
 
     if (dump) {
@@ -479,10 +551,40 @@ int main(int argc, char **argv) {
         printf("nproc=%d top:", M.nproc);
         for (int i = 0; i < M.ntop; i++) printf(" %s(%.0fM)", M.top[i].name, M.top[i].rss_mb);
         printf("\n");
+
+        /* 生产服务器：真的拉一次，证明链路是通的（部署自检靠这个判据） */
+        if (R.enabled) {
+            double t0 = now_s();
+            remote_start(&R, t0);
+            int ok = 0;
+            while (now_s() - t0 < 12.0 && !ok) {
+                struct pollfd p = {remote_fd(&R), POLLIN, 0};
+                if (p.fd < 0) break;
+                poll(&p, 1, 500);
+                ok = remote_read(&R, now_s());
+                remote_reap(&R, now_s());
+                if (!R.running) break;
+            }
+            remote_stop(&R);
+            if (ok) {
+                printf("remote host=%s ncore=%d cpu=%.1f%% mem=%.0fM/%.0fM disk=%.0f%% "
+                       "temp=%.1fC dock=%d nproc=%d ip=%s\n",
+                       R.m.host, R.m.ncore, R.m.cpu_pct, R.m.mem_used_mb, R.m.mem_total_mb,
+                       R.m.disk_used_pct, R.m.temp_c, R.m.ndocker, R.m.nproc, R.m.ip);
+                printf("remote_top:");
+                for (int i = 0; i < R.m.ntop && i < 5; i++)
+                    printf(" %s(%.0fM)", R.m.top[i].name, R.m.top[i].rss_mb);
+                printf("\n");
+            } else {
+                printf("remote FAILED（12 秒内没拿到一帧；手动验：ssh -T %s 'perl -' < "
+                       "tools/probe-remote.pl）\n", R.target);
+            }
+        }
         char so[32] = {0};
         sleep_off_desc(so, sizeof so);
-        printf("panel_idle=%.0fs login_back=%.0fs grace=%.1fs sleep_off=%s user=%s\n",
-               CFG_PANEL_IDLE, CFG_LOGIN_BACK, CFG_INPUT_GRACE, so, g_user);
+        printf("panel_idle=%.0fs login_back=%.0fs grace=%.1fs sleep_off=%s user=%s remote=%s\n",
+               CFG_PANEL_IDLE, CFG_LOGIN_BACK, CFG_INPUT_GRACE, so, g_user,
+               CFG_REMOTE[0] ? CFG_REMOTE : "(未配置)");
         return 0;
     }
 
@@ -611,6 +713,22 @@ int main(int argc, char **argv) {
             nsamp++;
         }
 
+        /* --- 生产服务器采集 ---
+           只在「有人在看」的时候跑：面板显示 → 拉起；回桌面/登录页 → 停掉（省流量、省远端 CPU）。
+           ⚠️ 但**保留已采集的数据**：回面板时立刻有完整一帧可画，不会白掉几秒。 */
+        if (R.enabled) {
+            double tw = now_s();
+            if (state == ST_PANEL) {
+                remote_start(&R, tw);
+            } else if (R.running) {
+                remote_stop(&R);
+            }
+            remote_reap(&R, tw);
+            FEED.online = remote_online(&R, tw);
+            FEED.age_s = remote_age(&R, tw);
+            if (FEED.age_s < 0 && R.running) FEED.age_s = -1;
+        }
+
         /* --- 状态机 --- */
         double idle = x_idle();
         double in_state = now_s() - state_enter;
@@ -657,15 +775,28 @@ int main(int argc, char **argv) {
         tick++;
         dbg_iter++;
         dbg_tick();
-        struct pollfd p = {ConnectionNumber(dpy), POLLIN, 0};
-        int pr = poll(&p, 1, state == ST_DESKTOP ? 1000 : 500);
+        /* poll 两个源：X 连接 + 生产服务器的 ssh 管道（非阻塞，绝不引入第二个线程） */
+        struct pollfd p[2];
+        p[0].fd = ConnectionNumber(dpy);
+        p[0].events = POLLIN;
+        p[0].revents = 0;
+        p[1].fd = remote_fd(&R);
+        p[1].events = POLLIN;
+        p[1].revents = 0;
+        int nfd = (p[1].fd >= 0) ? 2 : 1;
+        int timeout = state == ST_DESKTOP ? 1000 : 500;
+        int pr = poll(p, (unsigned)nfd, timeout);
         if (DBG) {
             if (pr == 0) dbg_poll_to++;
-            else if (p.revents & POLLIN) dbg_poll_rd++;
+            else if (p[0].revents & POLLIN) dbg_poll_rd++;
             else dbg_poll_oth++;
+        }
+        if (nfd > 1 && (p[1].revents & (POLLIN | POLLHUP | POLLERR))) {
+            if (remote_read(&R, now_s())) dbg_remote_frames++;
         }
     }
 
+    remote_stop(&R);
     cairo_destroy(cr);
     cairo_surface_destroy(surf);
     if (back) XFreePixmap(dpy, back);

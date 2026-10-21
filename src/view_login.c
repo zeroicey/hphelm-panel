@@ -17,7 +17,7 @@ void view_login_draw(cairo_t *cr, const view_ctx_t *v, const metrics_t *m, const
     const double cy = v->lh / 2.0;
     char b1[64], b2[64];
 
-    v_bg(cr, v->lw, v->lh);
+    if (!v->bg_done) v_bg(cr, v->lw, v->lh);
 
     /* ---- 时钟 ---- */
     strftime(b1, sizeof b1, "%H:%M", localtime(&m->now));

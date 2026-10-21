@@ -44,13 +44,20 @@ PANEL ──idle≥sleep_off(0=永不)──▶ DPMS 关屏；任意输入唤醒
 
 ```
 每帧：
-  content_sig()  ── FNV-1a over metrics_t + 界面态（state/pwlen/busy/cursor/err/倒计时）
+  content_sig()  ── FNV-1a over 本机 metrics_t + 远端快照 + 界面态
+      │            （state/pwlen/busy/cursor/err/倒计时/远端在线与离线秒数）
       │ 没变 ⇒ return（不画、不上屏）
       ▼
-  render()       ── 全部绘制进离屏 Pixmap（back）──▶ cairo_surface_flush
+  render()       ── ① XCopyArea(bgpix → back)   背景渐变只渲染过一次
+                    ② 全部绘制进离屏 Pixmap（back）
+                    ③ cairo_surface_flush
       ▼
   blit()         ── 一次 XCopyArea(back → win)    ──▶ XFlush
 ```
+
+**两个 pixmap 分工**：`bgpix` 存渐变底（尺寸变化时重建一次），`back` 是每帧的后备缓冲。
+每帧先用一次服务器端 `XCopyArea` 把底铺上去，再让 cairo 在最上面画内容 ——
+比每帧让 cairo 求值一遍整屏渐变便宜 4~5ms（见 `design.md` 六·五）。
 
 ### 为什么必须离屏（否则会闪）
 
@@ -79,6 +86,44 @@ PANEL ──idle≥sleep_off(0=永不)──▶ DPMS 关屏；任意输入唤醒
 尺寸变化（`ConfigureNotify`）⇒ `surface_init()` 重建 pixmap + `redraw_force()`。
 
 ---
+
+## 二·五、生产服务器采集（`src/remote.[ch]` + `tools/probe-remote.pl`）
+
+```
+hphelm-panel ──fork/exec──▶ ssh -T <target> 'perl -'   ──▶ 被监控机的 perl
+     ▲                         stdin = tools/probe-remote.pl（本地文件）
+     └─── 非阻塞 read(stdout) ── 1 Hz 的 S/C/P/E 行
+```
+
+**探针输出契约**（改任何一边都要同时改另一边）：
+
+| 行 | 内容 |
+| --- | --- |
+| `S` | `ts host cpu% ncore uptime memT memU swapT swapU disk%:GB rx tx temp l1 l5 l15 freqMHz dock nproc gov iface ip` |
+| `C` | `core0% core1% …`（ncore 个） |
+| `P` | `nproc pid:rssMiB:name,pid:rssMiB:name,…`（每 3 秒，最多 24 条） |
+| `E` | 一帧结束 ⇒ **只有收到 E 才提交** |
+
+**四条设计约束**：
+
+1. **不 fork 每帧**：建连一次、常驻，fd 直接进主循环的 `poll`（不引入第三个线程）。
+2. **只在面板态跑**：`ST_PANEL` 才 `remote_start()`，回桌面/登录页 `remote_stop()`
+   （没人看的时候不该有网络流量与远端 CPU），但**保留已采到的快照** ⇒ 回面板立刻有整帧可画。
+3. **半帧不提交**：`S`/`C`/`P` 写进 `stg`，收到 `E` 才 `m = stg` ⇒ 视图读不到撕裂状态。
+4. **退避重连**：2→4→8→16→30 秒封顶；断线期间列标题旁写「离线 Ns」，主循环照常。
+
+**三个已踩的实现坑**：
+
+- `P` 行**必须按逗号分段**，不能按空格：进程名里有空格（`searxng worker`），
+  按空格分会把一条记录劈成两半，名字里混进 pid 和内存数字（实测）。
+  探针那边也把名字里的空白/逗号/冒号替换成 `_` —— 两头都防。
+- `stop_child()` **不能 kill 完就把 pid 清零**：子进程会变僵尸且永远没人收。
+  现在给 200ms 宽限（只在状态切换时发生）再从 `SIGKILL` 兜底。
+- 探针脚本用 `ssh 'perl -' < script` 喂进去，**不落盘到对方机器**；
+  本程序找脚本的顺序是 `$HPHELM_PROBE` → `/usr/local/share/hphelm-panel/probe-remote.pl` → 开发目录。
+
+**`--dump` 会真的拉一帧**（部署自检靠它判「链路通」）。⚠️ 配置行必须是 `--dump` 输出的**最后一行**
+以外的位置按前缀取 —— 我第一版让部署脚本用 `tail -1`，加一行日志就把判据搞成了假失败。
 
 ## 三、采样：为什么一切都按「时间」节流
 

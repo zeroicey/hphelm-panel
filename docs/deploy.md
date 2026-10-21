@@ -40,6 +40,24 @@ tools/deploy.sh                  # 构建 → 备份旧二进制 → 安装 → 
 所以：
 
 - **「更新系统屏保」= 用新的 `/usr/local/bin/hphelm-panel` 替换旧的，并让它重新跑起来。** 就这一件事。
+
+### 生产服务器（可选）
+
+面板的右列显示一台远程主机（默认 `hpcore`）。配置只有一个文件：
+
+```sh
+sudo tee /etc/hphelm-panel.conf <<'EOF'
+# 生产服务器：ssh 目标名（~/.ssh/config 里的 Host 别名）。留空/删掉这行 = 只显示本机。
+remote=hpcore
+EOF
+```
+
+优先级：`--remote <host>` > `$HPHELM_REMOTE` > `/etc/hphelm-panel.conf`。
+**改完 `pkill -x hphelm-panel`**（守护循环会用新配置拉起）。
+
+⚠️ 前提：本机到该目标**免密 ssh 可用**（`ssh -T -o BatchMode=yes hpcore true`），
+且对方有 `perl`（Debian/Arch 都自带，**不需要装任何东西**）。
+链路自检：`./hphelm-panel --dump | grep '^remote host='`。
 - 它由 **lightdm 的会话入口 `/usr/local/bin/hphelm-session`** 拉起（在 `while :; do … done` 守护循环里），
   ⇒ `pkill -x hphelm-panel` 之后约 1 秒会自己用**新二进制**回来。**不需要重启 lightdm，也不需要退出登录。**
 - 它**替代了 lightdm 的 greeter** ⇒ 它挂了就是「用户看不到登录页」⇒ 所以下面有三条红线。
@@ -53,6 +71,8 @@ tools/deploy.sh                  # 构建 → 备份旧二进制 → 安装 → 
 | `/data/dev/hphelm-panel/` | **源码 = 部署目录**（同一个目录，git 仓，`main` 分支） | 你 |
 | `/usr/local/bin/hphelm-panel` | 主程序（~71 KB；`ldd` 里 GUI 工具包 **0** 个） | `sudo make install` |
 | `/usr/local/libexec/hphelm-auth` | setuid 认证助手，**必须是 `4755 root:root`** | `sudo make install` |
+| `/usr/local/share/hphelm-panel/probe-remote.pl` | 生产服务器探针（**644，不是可执行文件**；由 ssh 喂到对方 stdin） | `sudo make install` |
+| `/etc/hphelm-panel.conf` | `remote=<ssh 目标>`（改主机名只改这里，不用动会话包装器） | **手工创建**（见下） |
 | `/usr/local/bin/hphelm-panel.prev` | **上一版二进制**（deploy.sh 在内容不同时自动留） | `deploy.sh` |
 | `/usr/local/bin/hphelm-session` | lightdm 会话入口：`xset`、日志轮转、守护循环、兜底 | **手工，一次性**（见第五节） |
 | `/etc/pam.d/hphelm-auth` | **专用** PAM 服务（只留 `pam_unix`） | **手工，一次性**（见第五节） |

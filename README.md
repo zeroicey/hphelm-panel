@@ -1,9 +1,11 @@
 # hphelm-panel
 
 > **English TL;DR** — A hand-drawn (no GUI toolkit) X11 **ops dashboard + lock screen** for exactly
-> one machine in my home fleet (`hphelm`): ~1.9k lines of C over cairo + pango, **0.60% of one core**,
-> ~5 MiB private memory, 2 threads, zero GUI toolkit dependencies. Idle → resource panel; any input →
-> login page; PAM auth → desktop; idle again → panel.
+> one machine in my home fleet (`hphelm`): ~2.3k lines of C over cairo + pango, **~1% of one core**,
+> ~5 MiB private memory, 2 threads, zero GUI toolkit dependencies. The dashboard shows **two hosts
+> side by side** (this workstation + one production server pulled over a single long-lived ssh pipe,
+> nothing installed on the remote side). Idle → resource panel; any input → login page; PAM auth →
+> desktop; idle again → panel.
 > ⚠️ **This is not a drop-in product.** It is *my* answer for *my* machine, wired into our fleet's
 > desktop stack and operational rules. Read [「这不是给谁用的」](#这不是给谁用的我为什么这么写)
 > before copying anything.
@@ -31,9 +33,35 @@ PANEL ──idle≥sleep_off──▶ DPMS 关屏；任意输入唤醒
        └─ sleep_off ≤ 0 ⇒ **永不关屏**（默认，2026-10-19 起）
 ```
 
-面板内容：顶栏（主机/IP/uptime/核数/时间/7×24 标记）· CPU（温度·governor·频率·使用率·每核柱·load·
-5 分钟曲线）· 内存（用量·swap/zram·SSD 读写·磁盘）· 网络（tailscale·上下行速率·双曲线）·
-**进程榜 40 条**（4 列 × 10 行，逐列向下、按 RSS 降序，每 3 秒刷新）。
+面板是**三列**：`本机 │ 生产服务器 │ 进程榜`（用户口径：「进程排行榜只占一列」「一块屏幕上同时显示
+本机跟生产服务器」）。
+
+- **两个主机列完全对称**（同一个 `draw_host()` 画两遍）：主机名/连接状态 · CPU（温度·governor·频率·
+  使用率·每核柱·load·5 分钟曲线）· 内存（用量·swap·磁盘·5 分钟曲线）· 网络（上下行速率·双曲线）·
+  磁盘 + 容器数
+- **进程榜一列**：上段本机 12 条、下段生产 12 条（按 RSS 降序，每 3 秒刷新）
+- **生产服务器**：ssh 长连接 + 远端 `perl` 探针，**不在被监控机装任何东西**（见下）
+
+### 生产服务器监控（`--remote`）
+
+```
+hphelm-panel ──fork/exec──▶ ssh -T hpcore 'perl -'  ──▶ 被监控机的 perl（脚本从 stdin 喂进去）
+     ▲                          stdin = tools/probe-remote.pl（本地文件，不落盘到对方）
+     └──── 非阻塞读 stdout ───── 1 Hz 的 S/C/P/E 行
+```
+
+| 设计点 | 为什么 |
+| --- | --- |
+| **一条长连接，不是每秒 ssh** | 每次建连 ~100ms + 一次完整握手，还会让远端 sshd 每秒 fork 一个进程 |
+| **远端只读 `/proc`、`/sys`** | 不装包、不落文件、不起服务、不开端口 —— 那台是生产机，原则是「必须干净」 |
+| **fd 直接进主循环的 `poll`** | 不引入第三个线程，不打断 1 Hz 采样节奏 |
+| **只在面板可见时跑** | 桌面态/登录页把子进程停掉（没人看的时候不该有流量），但**保留已采到的数据** |
+| **半帧不提交** | `S`/`C`/`P` 写进暂存，收到 `E` 才整体提交 ⇒ 视图读不到「CPU 是新的、进程榜是空的」 |
+| **退避重连** | 2→4→8→16→30 秒封顶；断线时列标题旁显示「离线 Ns」，主循环照常跑 |
+
+实测成本：远端 `perl` **~0.3% of one core**，本机 `ssh` 进程 <0.1%。
+配置写在 `/etc/hphelm-panel.conf`（`remote=hpcore`），优先级 `--remote` > `$HPHELM_REMOTE` > 该文件。
+**没配就没有右列**（面板会写「未配置」，不拿本机数据冒充）。
 
 ## 为什么是「自己画」——这是实测选出来的，不是偏好
 
@@ -57,8 +85,12 @@ PANEL ──idle≥sleep_off──▶ DPMS 关屏；任意输入唤醒
 **只差 112 像素（0.001%）** ⇒ 字体回退生效，中文与 Nerd Font 图标正常。
 另外自绘能精确 `cairo_scale(1.48)` 对上本机 141.8 DPI（GTK 在 X11 只支持整数倍缩放）。
 
-**本程序实测（真机）**：`CPU 0.60% of one core`（20s 内 utime+stime = 120ms）·
-`PSS 24.8 MiB`（其中 **Pss_Anon / Private 仅 5.4 MiB**，其余是与 X/picom/pango 共享的库页）· 2 线程。
+**本程序实测（真机）**：`PSS 24.8 MiB`（其中 **Pss_Anon / Private 仅 5.4 MiB**，其余是与
+X/picom/pango 共享的库页）· 2 线程。
+CPU 在加第二台主机后从 **0.60% → 约 1.0%（只本机）/ 约 1.4%（含生产服务器）of one core**
+（一帧绘制 5~10ms、1 Hz 重绘；实测瓶颈是 pango 整形次数与整屏渐变填充，两者本轮都已优化：
+右对齐复用同一次排版、背景渐变只渲染一次再 `XCopyArea` 复制）。
+⚠️ 早期文档里的 0.60% 是在「只有一台主机、进程榜 40 条」的版式下量的，与现在不可直接比较。
 
 ## 这不是给谁用的（我为什么这么写）
 
@@ -100,6 +132,7 @@ hphelm-panel --login-back 120     # 登录页空闲多久回面板（秒）
 hphelm-panel --input-grace 1.2    # 进面板后多久才接受唤醒（防误触）
 hphelm-panel --sleep-off 0       # 面板空闲多久关屏（DPMS）；**0 或负数 = 永不关屏（默认）**
 hphelm-panel --scale 1.48         # 缩放（物理/逻辑像素比）
+hphelm-panel --remote hpcore      # 生产服务器（ssh 目标）；空 = 只显示本机
 hphelm-panel --lock /tmp/x.lock   # 单实例锁路径（默认 /tmp/hphelm-panel.lock）
 hphelm-panel --state panel|login  # 强制初始状态（验证界面用）
 hphelm-panel --dump               # 只打采集层数据后退出（不需要 X）
@@ -122,14 +155,16 @@ HPHELM_PANEL_DEBUG=1 …            # 主循环仪表：it/s · poll 结果 · �
 
 ```
 src/theme.h         配色（Catppuccin Mocha）+ 版式常量（逻辑像素）
-src/metrics.[ch]    数据采集：只读 /proc、/sys，不 fork 子进程
+src/metrics.[ch]    本机数据采集：只读 /proc、/sys，不 fork 子进程
+src/remote.[ch]     生产服务器采集：ssh 长连接 + 非阻塞行解析 + 退避重连
 src/view.[ch]       绘制基元：文字/背景渐变/细线/进度条/每核柱/sparkline/量程量化
-src/view_panel.c    面板版面（无卡片、三栏 + 进程榜）
+src/view_panel.c    面板版面（无卡片、三列：本机 │ 生产 │ 进程榜）
 src/view_login.c    登录页版面（无卡片、居中）
 src/auth.[ch]       与 setuid 助手通信（密码只走 stdin）
 src/hphelm-auth.c   唯一的特权代码：setuid root，调 PAM 验一次密码
 src/panel.c         X11 窗口、事件、状态机、主循环、双缓冲
-tools/              渲染验证（render-ascii/render-region/measure）、帧差分探针、部署脚本
+tools/              渲染验证（render-ascii/render-region/measure）、帧差分探针、部署脚本、
+                    probe-remote.pl（喂给被监控机的只读探针）
 docs/               架构 / 设计 / 验证 / 坑 / 部署
 ```
 

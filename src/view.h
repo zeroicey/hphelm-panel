@@ -21,7 +21,16 @@
 typedef struct {
     double scale;
     double lw, lh; /* 逻辑尺寸 */
+    int bg_done;   /* 背景已经由主循环预填进后备缓冲（省掉每帧重算渐变） */
 } view_ctx_t;
+
+/* 生产服务器采集状态（面板需要把「离线多少秒」画出来，而不是静静显示旧数字） */
+typedef struct {
+    int enabled;          /* 配了生产服务器（--remote） */
+    int online;           /* 采集健康：在跑且帧不老于 5 秒 */
+    double age_s;         /* 距上一帧的秒数；-1 = 从未连上 */
+    char target[64];      /* ssh 目标名（还没收到第一帧时用它当列标题） */
+} view_feed_t;
 
 /* 初始化（字体描述符 + 绑定 PangoLayout；可重复调用，字体描述符只建一次） */
 void view_init(PangoLayout *lay);
@@ -41,6 +50,16 @@ double v_text(cairo_t *cr, double x, double y, PangoFontDescription *fd, uint32_
               const char *fmt, ...);
 void v_text_right(cairo_t *cr, double xr, double y, PangoFontDescription *fd, uint32_t rgb,
                   const char *fmt, ...);
+/* 右对齐并返回宽度（一次整形同时完成「量」与「画」，省掉一次 v_text_w） */
+double v_text_right_w(cairo_t *cr, double xr, double y, PangoFontDescription *fd, uint32_t rgb,
+                      const char *fmt, ...);
+/* 该字体下单个等宽字符的宽度（字体是等宽的 ⇒ 一次测量可反复用） */
+double v_char_w(PangoFontDescription *fd);
+/* 按宽度把名字截断成「前缀…」，**不会把 UTF-8 多字节字符切一半**
+ * （切一半 pango 会画出豆腐块或直接不画 —— 静默错误，肉眼以外很难发现）。
+ * 用等宽字体按字符宽估算，不做逐字符测量（那会让单帧绘制时间翻倍）。 */
+void v_truncate_mono(char *out, size_t outn, const char *name, PangoFontDescription *fd,
+                     double maxw);
 void v_text_center(cairo_t *cr, double cx, double y, PangoFontDescription *fd, uint32_t rgb,
                    const char *fmt, ...);
 
@@ -70,7 +89,9 @@ void v_fmt_rate(double bps, char *out, size_t n);
 void v_fmt_uptime(double s, char *out, size_t n);
 
 /* ---- 两个视图 ---- */
-void view_panel_draw(cairo_t *cr, const view_ctx_t *v, const metrics_t *m);
+/* local = 本机；remote = 生产服务器（未配置时传 NULL）；feed = 远程采集状态 */
+void view_panel_draw(cairo_t *cr, const view_ctx_t *v, const metrics_t *local,
+                     const metrics_t *remote, const view_feed_t *feed);
 void view_login_draw(cairo_t *cr, const view_ctx_t *v, const metrics_t *m, const char *user,
                      int pwlen, const char *err, int busy, int cursor_on, int wait_s);
 

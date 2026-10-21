@@ -168,3 +168,44 @@ magick shot-panel.png -strip -quality 90 assets/panel.png
 ```
 
 截图只用于 README 展示；**判据不依赖截图**（判据是脚本输出的数字）。
+
+---
+
+## 九、双主机（生产服务器）判据（2026-10-21 新增）
+
+```sh
+# ① 链路通：--dump 会真的拉一帧（12 秒超时）
+./hphelm-panel --dump | grep '^remote host='
+# 期望：remote host=hpcore ncore=16 cpu=… mem=…/… disk=… temp=… dock=15 nproc=… ip=…
+
+# ② 只在面板态跑：回桌面后子进程必须消失
+pid=$(pgrep -x hphelm-panel); ps --ppid $pid -o cmd | grep ssh || echo "（桌面态无 ssh ✅）"
+
+# ③ 断线可恢复：杀掉远端探针，列标题应在 5 秒内变「离线 Ns」，60 秒后变红
+ssh -T hpcore 'pkill -f "perl -"'
+sleep 6; DISPLAY=:0 import -window "$(xdotool search --name hphelm-panel|tail -1)" /tmp/off.png
+python3 tools/render-region.py /tmp/off.png 1150 80 1408 140 4   # 看右上角状态文字
+```
+
+⚠️ **别用「杀远端进程」来验断线**：`ssh` 会立刻重连、2 秒内就恢复了，肉眼看不出来。
+可靠的模拟是**暂停本地 ssh 子进程**：
+
+```sh
+spid=$(ps --ppid $(pgrep -x hphelm-panel) -o pid= | head -1)
+kill -STOP $spid; sleep 7   # 数据停止到达 ⇒ 面板应显示「离线 Ns」
+kill -CONT $spid            # 恢复 ⇒ 应立刻回到「在线」
+```
+
+## 十、量 CPU 的规矩（血泪，见 `.ai/pitfalls/cases/2026-10-21-*`）
+
+```sh
+uptime            # ⚠️ load > nproc/2 就别量了，量到的是别人的负载
+pid=$(pgrep -x hphelm-panel)
+a=$(awk '{print $14+$15}' /proc/$pid/stat); sleep 20
+b=$(awk '{print $14+$15}' /proc/$pid/stat)
+# CLK_TCK=100 ⇒ 1 jiffie = 10ms
+python3 -c "print(f'{(($b-$a)*10)/20000*100:.2f}% of one core')"
+```
+
+**报数字时必须一起写**：窗口长度 · load average · 是否含 `--remote`。
+优化前后的对比必须**在同一窗口内交替**（A10s B10s A10s B10s 取中位数），不许串行跑两轮。

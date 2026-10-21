@@ -41,6 +41,8 @@ ok()   { printf '\033[32m    OK %s\033[0m\n' "$*"; }
 INSTALLED=/usr/local/bin/hphelm-panel
 PREV=/usr/local/bin/hphelm-panel.prev
 AUTH_INSTALLED=/usr/local/libexec/hphelm-auth
+PROBE_INSTALLED=/usr/local/share/hphelm-panel/probe-remote.pl
+REMOTE_HOST="${HPHELM_REMOTE:-}"   # 有值就顺带验一次生产服务器链路
 
 # ---------------------------------------------------------------- 1/7 环境自检
 say "1/7 环境自检"
@@ -110,19 +112,32 @@ else
     [ "$(stat -c '%a %U:%G' "$AUTH_INSTALLED")" = "4755 root:root" ] \
         && ok "认证助手权限 4755 root:root" \
         || die "认证助手权限不是 4755 root:root（PAM 认证会失败）：$(stat -c '%a %U:%G' "$AUTH_INSTALLED")"
+    cmp -s "$SRC/tools/probe-remote.pl" "$PROBE_INSTALLED" \
+        && ok "远程探针已装到 $PROBE_INSTALLED（644，非可执行）" \
+        || die "远程探针没装上/内容不一致：$PROBE_INSTALLED"
 fi
 
 # ------------------------------------------------- 5/7 语义自检（不需要 X，不抢锁）
 say "5/7 语义自检：--dump（不需要 X）"
 if [ "$CHECK" = 1 ]; then
     dry "$SRC/hphelm-panel --dump | tail -1   ⇒ 期望含 sleep_off=off（永不关屏）"
+    dry "HPHELM_REMOTE=<host> tools/deploy.sh   ⇒ 顺带验生产服务器链路"
 else
-    out=$("$SRC/hphelm-panel" --dump | tail -1)
+    dump=$("$SRC/hphelm-panel" --dump ${REMOTE_HOST:+--remote "$REMOTE_HOST"})
+    # ⚠️ 不要用 `tail -1`：--dump 后面可能还有别的行（远程链路一节）。
+    #    按前缀取「配置行」，否则判据会因为一行日志顺序变化而假失败（已踩）。
+    out=$(printf '%s\n' "$dump" | grep '^panel_idle=' | tail -1)
     printf '    %s\n' "$out"
     case "$out" in
         *"sleep_off=off"*) ok "0 语义正确（永不关屏）" ;;
         *) die "sleep_off 不是 off —— 默认值或判据被改回去了，停下来查（docs/pitfalls.md #16）" ;;
     esac
+    if [ -n "$REMOTE_HOST" ]; then
+        printf '%s\n' "$dump" | grep '^remote host=' | sed 's/^/    /'
+        printf '%s\n' "$dump" | grep -q '^remote host=' \
+            && ok "生产服务器 $REMOTE_HOST 链路通（探针已返回一帧）" \
+            || warn "生产服务器 $REMOTE_HOST 拉不到数据（面板会显示「正在建立 ssh 连接…」）"
+    fi
 fi
 
 # ------------------------------------------------------------------- 6/7 重启

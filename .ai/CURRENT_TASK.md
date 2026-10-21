@@ -2,40 +2,54 @@
 
 <!-- The single live surface. Keep it under ~60 lines: it is read on every session start. -->
 
-**Status:** 🟡 active · **Updated:** 2026-10-21
+**Status:** 🟡 active · **Updated:** 2026-10-21（第七轮）
 
 ## Goal
 
-把「改完代码就能安全上真屏」这条链交到项目自己的 AI 手上：本机部署可跑、判据可复现、记忆库可用。
+面板同屏显示**本机 + 生产服务器（hpcore）**，版面为 `本机 │ 生产 │ 进程榜` 三列。
+第七轮已完成并上真机；下一轮待定（见 Checklist 未勾项）。
 
 ## Checklist
 
-- [x] `tools/deploy.sh` 本土化（原地七阶段部署 + 判据），本机三次真跑全绿
-- [x] `/usr/local/bin/hphelm-panel.prev` 自动备份 ⇒ 回滚有凭据
-- [x] `docs/deploy.md` 重写成「更新系统屏保」runbook（判据表 / 三层回滚 / 六件绝不能做的事）
-- [x] `.ai/` 记忆库初始化并填入真实内容（`AGENTS.md` 契约保留原有正文）
-- [x] `AGENTS.md` / `HANDOFF.md` / `README.md` 清掉「源码在 hpcore」的旧事实
-- [ ] CPU 偏差定位（见 Blockers 第 1 条）
-- [ ] GitHub 推送通路（见 Blockers 第 2 条）
+- [x] `src/remote.[ch]`：ssh 长连接 + 非阻塞行解析 + 半帧不提交 + 退避重连
+- [x] `tools/probe-remote.pl`：远端只读探针（从 stdin 喂入，**不在 hpcore 装任何东西**）
+- [x] 三列版式（`theme.h` 绝对逻辑像素 + `draw_host()` 画两台 + 进程榜一列两段）
+- [x] `/etc/hphelm-panel.conf` 的 `remote=`（改主机名不用编辑 root 的会话包装器）
+- [x] `tools/deploy.sh` 安装并校验探针 + `HPHELM_REMOTE=` 时顺带验链路
+- [x] 性能：右对齐复用排版、背景渐变只渲染一次、等宽字体按字符宽截断
+- [x] 真机判据全绿（tty7 / greeter=0 / panel=1 / 帧差分 0 / 日志无兜底）
+- [ ] **CPU 仍略超预算**：只本机 ~1.0%、含生产 ~1.4%（预算 <1%）— 见 Blockers
+- [ ] 容器**健康**（重启循环/备份/证书）还没做，现在只有「容器 N 个」
+- [ ] GitHub 推送通路（用户已裁决「先不管」，提交留本地）
 
 ## Code state
 
-`main` · 工作树包含本轮未提交改动（deploy.sh 重写 + docs/ + `.ai/` + `.engram/`）。
-已装二进制与源码**逐字节一致**；现场：`tty7` · `slick-greeter=0` · `hphelm-panel=1` · `sleep_off=off` · 帧差分 0。
-没有半成品改动；`src/` 本轮未动。
+`main` · 第七轮改动已提交。已装二进制与源码逐字节一致。
+现场：`tty7` · `slick-greeter=0` · `hphelm-panel=1` · `sleep_off=off` · 帧差分 `0` 帧 >30% ·
+面板子进程里有 1 个 `ssh … hpcore perl -`。
 
 ## Blockers
 
-- CPU 实测 **1.13%–1.60%** of one core，高于文档记录的 0.60%（2026-10-18）— waiting on 用 `HPHELM_PANEL_DEBUG=1` 把「重绘次数」与「单帧耗时」分开后定性
-- `git push origin main` 在本机失败：hphelm 的 GitHub 身份只够推 `dotfiles`（deploy key 一仓一把）— waiting on 无（**用户 2026-10-21 裁决「先不管，提交留本地」**）⇒ 提交落地即可，别为此改动仓库配置
+- **CPU 1.0%（1 台）/ 1.4%（2 台）of one core，预算 <1%**。
+  已定位到「单帧绘制 5~10ms × 1 Hz」，并修掉三个大头（pango 整形次数、整屏渐变、逐字符测量）。
+  要进一步降只有两条路：**降低重绘频率**（内容签名已经是「没变就不画」，但时钟每秒变 ⇒ 每秒必画一次）
+  或**区域局部重绘**（只重画变化的区块）。⚠️ 再优化前先读
+  `.ai/pitfalls/cases/2026-10-21-benchmarking-cpu-under-foreign-load.md`：
+  上一次量 CPU 时机器 load 23，数字全部作废。
+- `git push origin main` 在本机失败（hphelm 的 GitHub 身份只够推 `dotfiles`）—
+  用户 2026-10-21 裁决「先不管，提交留本地」⇒ 别为此改动仓库配置。
 
 ## Pitfall reminders for the current branch
 
-- #15 绝不 `dm-tool` / `light-locker`：会把 lightdm 的 greeter 招回来并抢走 VT（`docs/pitfalls.md`）
+- #15 绝不 `dm-tool` / `light-locker`（会把 lightdm greeter 招回来并抢走 VT）
 - #16 `sleep_off=0` = 永不关屏；裸比较会让 0 变成「立即关屏」
-- 部署脚本的三个假告警（`pgrep -q` 不存在 / 全文件 grep 兜底字符串 / CPU 窗口含启动秒）见 `.ai/pitfalls/cases/2026-10-21-deploy-script-false-alarms.md`
+- #17 **量 CPU 必须同时报 load average 与窗口长度**，优化前后要同窗口交替对比
+- #18 加宽/加列后必须重跑 `--bands` 量竖带起点；`-1` 不要兼职两种语义；UTF-8 截断别切半
+- #19 外部脚本读 `--dump` 一律按前缀 grep，不要依赖行序（`tail -1` 已经坑过一次）
+- 测试实例与真机实例同名 ⇒ **杀进程按 `/proc/<pid>/environ` 里的 `DISPLAY` 挑 pid**，永不 `pkill -f`
 
 ## Next action
 
-在真机跑 `HPHELM_PANEL_DEBUG=1` 拿 60 秒仪表输出，记录 it/s、poll 结果分布、绘制/上屏耗时，
-再与 `docs/verify.md` 第五节的口径对齐 —— **先量再改**，不要因为数字比旧文档大就先动渲染代码。
+先决定 CPU 这一项怎么收：**（a）接受 1.0~1.4% 并改文档预算**（面板已经比 conky 便宜得多），
+或**（b）做区域局部重绘**（只重画时钟/数字所在的行，预计能砍掉一半）。
+动手前先在**空闲的机器上**（`uptime` 的 load < nproc/2）量一次基线，把数字记进 HANDOFF。

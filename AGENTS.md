@@ -76,11 +76,11 @@ README 的「这不是给谁用的」那张表就是**设计边界**——不要
 | 约束 | 数字 | 为什么 |
 | --- | --- | --- |
 | **不许引 GUI 工具包** | GTK4 = 119 MiB vs 自绘 7.4 MiB | 这是本项目的**立项理由**（实测见 README 表） |
-| CPU 预算 | 目标 **< 1% of one core**（现状 0.60%） | 它 7×24 常驻在工位机上 |
+| CPU 预算 | 目标 **< 1% of one core**（现状 **~1.0% 只本机 / ~1.4% 含生产服务器**，略超；见 `HANDOFF.md` 三·八） | 它 7×24 常驻在工位机上 |
 | 内存预算 | Private/Anon **约 5 MiB**（PSS 里大部分是共享库页） | 同上 |
 | 线程数 | 2 | 采样在主循环里同步做，不要引入线程池 |
 | 采样频率 | **1 Hz**（`metrics_sample` 按时间节流） | 不要「每轮循环采样一次」——循环速率一变数值就变噪声 |
-| 渲染 | **离屏 pixmap + 每帧一次 `XCopyArea`** | 直接画窗口会闪（见 `docs/architecture.md`） |
+| 渲染 | **离屏 pixmap + 每帧一次 `XCopyArea`**；背景渐变另存一张 `bgpix` 只渲染一次 | 直接画窗口会闪（见 `docs/architecture.md`） |
 
 性能是**验收项**，不是「有空再优化」：每轮改完都要报 CPU 与内容变化率。
 
@@ -148,7 +148,9 @@ python3 tools/measure.py assets/panel.png --runs 240 --bands
 | `src/view_panel.c` | 面板版面（三栏 + 进程榜） | ⭐⭐ 改面板只动这里 |
 | `src/view_login.c` | 登录页版面 | ⭐ 改登录页时 |
 | `src/view.c` | 绘制基元（文字/渐变/细线/条/每核柱/sparkline/量程） | 偶尔 |
-| `src/metrics.c` | 数据采集（`/proc`、`/sys`，不 fork） | 加指标时 |
+| `src/metrics.c` | **本机**数据采集（`/proc`、`/sys`，不 fork） | 加指标时 |
+| `src/remote.[ch]` | **生产服务器**采集（ssh 长连接 + 非阻塞解析 + 退避重连） | 改远端协议时 |
+| `tools/probe-remote.pl` | 喂给被监控机的**只读**探针（从 stdin 进，不落盘到对方） | 加远端指标时 |
 | `src/panel.c` | X11 窗口、事件、状态机、主循环、双缓冲、仪表 | 改交互时 |
 | `src/auth.c` + `src/hphelm-auth.c` | 认证（助手是唯一的特权代码，~120 行） | 一般不动 |
 
@@ -161,8 +163,11 @@ python3 tools/measure.py assets/panel.png --runs 240 --bands
 - ❌ 忘记 `gcv.graphics_exposures = False`（会让主循环自激空转，CPU 飙 50~80 倍）。
 - ❌ 用「每轮循环采样一次」代替时间节流；用 `difftime` 的整秒差算速率。
 - ❌ 向 lightdm 发任何锁请求；用退出码判定守护循环失败；回滚不先停 VT 守卫。
-- ❌ 用 `pkill -f <pattern>`（会匹配到执行它的 shell 自己，我们踩过四次）——用 `pkill -x` 或写进脚本。
-- ❌ 把版式坐标硬编码在 `view_*.c` 里（常量归 `theme.h`）。
+- ❌ 用 `pkill -f <pattern>`（会匹配到执行它的 shell 自己，我们踩过**五次**）——用 `pkill -x` 或写进脚本；
+  测试实例与真机实例同名，要按 `/proc/<pid>/environ` 里的 `DISPLAY` 挑 pid。
+- ❌ 把版式坐标硬编码在 `view_*.c` 里（常量归 `theme.h`）；也**不要**把绝对坐标当相对偏移用
+  （本轮就这么错了一次，整列下移 100px、编译零告警）。
+- ❌ 在机器忙的时候量 CPU（`uptime` 的 load > nproc/2 就别量）——量到的是别人的负载。
 - ❌ 把 `metrics_t` 之类的大结构放栈上（`read_procs` 的 `all[512]` 是 `static`）。
 - ❌ 为了「看起来不空」灌假数据。
 - ❌ 把项目假设包装成「通用产品」；也不要把「我们机队的口径」当成通用概念。

@@ -401,6 +401,23 @@ void metrics_sample(metrics_t *m, int want_procs) {
 
     read_mem(m);
     read_disk(m);
+    /* 容器数：数 cgroup 里的 docker-*.scope（不 fork docker，几乎零成本，10 秒一次）。
+       -1 = 这个核没有 docker（面板不显示这一项，绝不显示假的「0 个」）。 */
+    static double t_dock;
+    if (tnow - t_dock >= 10.0 || m->ndocker == 0) {
+        t_dock = tnow;
+        DIR *cg = opendir("/sys/fs/cgroup/system.slice");
+        if (cg) {
+            int n = 0;
+            struct dirent *ce;
+            while ((ce = readdir(cg)))
+                if (!strncmp(ce->d_name, "docker-", 7) && ce->d_name[7]) n++;
+            closedir(cg);
+            m->ndocker = n;
+        } else {
+            m->ndocker = -1;
+        }
+    }
     /* ⚠️ getifaddrs 每次都开 netlink 转储全部地址，是这里最贵的一项；
        IP 几乎不变 ⇒ 每 10 秒才刷一次（按时间，不按调用次数：
        否则循环一快就会狂刷）。net_up 会保留上次的值。 */

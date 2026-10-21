@@ -184,9 +184,9 @@ lightdm+bspwm+picom、专用 PAM 服务、会话包装器、三条运维红线�
 其余判据全绿（不闪、不空转、几何对、单实例）。清楚到代码里的假设**不要凭猜** ——
 正解是用 `HPHELM_PANEL_DEBUG=1` 看 it/s 与各阶段耗时，先把「重绘次数」与「单帧耗时」分开。
 
-**⚠️ 一个未解的交付缺口**：hphelm 的 GitHub 身份**只够推 `dotfiles`**（deploy key 一仓一把），
-所以本机 `git push origin main` 会权限失败。本轮提交只落在本地；要么另找有账号级密钥的机器推，
-要么在本仓加一把 write deploy key（需有人在 GitHub 网页/带 `repo` 权限的 token 上操作）。
+**⚠️ 一个未解的交付缺口（用户裁决「先不管」）**：hphelm 的 GitHub 身份**只够推 `dotfiles`**（deploy key 一仓一把），
+所以本机 `git push origin main` 会权限失败。本轮提交只落在本地；**用户 2026-10-21 裁决：先不管，提交留本地** ——
+不要为了这个去改仓库配置或另建密钥。哪天需要推时，要么另找有账号级密钥的机器，要么在本仓加 write deploy key。
 
 ## 四、已知粗糙点（下一轮的候选）
 

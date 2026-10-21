@@ -27,7 +27,7 @@
 ## Blockers
 
 - CPU 实测 **1.13%–1.60%** of one core，高于文档记录的 0.60%（2026-10-18）— waiting on 用 `HPHELM_PANEL_DEBUG=1` 把「重绘次数」与「单帧耗时」分开后定性
-- `git push origin main` 在本机失败：hphelm 的 GitHub 身份只够推 `dotfiles`（deploy key 一仓一把）— waiting on 用户给本仓加 write deploy key，或换有账号级密钥的机器推
+- `git push origin main` 在本机失败：hphelm 的 GitHub 身份只够推 `dotfiles`（deploy key 一仓一把）— waiting on 无（**用户 2026-10-21 裁决「先不管，提交留本地」**）⇒ 提交落地即可，别为此改动仓库配置
 
 ## Pitfall reminders for the current branch
 

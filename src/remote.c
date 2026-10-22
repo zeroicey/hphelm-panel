@@ -21,8 +21,24 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdarg.h>
 #include <sys/wait.h>
 #include <unistd.h>
+
+/* 状态变迁日志：只在**变化时**打一行（正常一天几行，不刷屏）。
+ * ⚠️ 没有这个日志，线上出现「离线」时无从查起 —— 2026-10-21 就是靠猜才找到原因的。 */
+static void rlog(const remote_t *r, const char *fmt, ...) {
+    char t[32];
+    time_t tt = time(NULL);
+    strftime(t, sizeof t, "%H:%M:%S", localtime(&tt));
+    printf("[%s] 远程 %s: ", t, r->target);
+    va_list ap;
+    va_start(ap, fmt);
+    vprintf(fmt, ap);
+    va_end(ap);
+    printf("\n");
+    fflush(stdout);
+}
 
 /* 探针脚本找法：先环境变量，再安装路径，最后开发目录（按顺序命中即止） */
 static const char *PROBE_ENV = "HPHELM_PROBE";
@@ -116,7 +132,7 @@ void remote_start(remote_t *r, double now) {
 
     int script = probe_open(NULL);
     if (script < 0) {
-        fprintf(stderr, "remote: 找不到 tools/probe-remote.pl（可用 $HPHELM_PROBE 指定）\n");
+        rlog(r, "找不到 tools/probe-remote.pl（可用 $HPHELM_PROBE 指定）");
         r->failures++;
         r->next_start = now + 60.0;
         return;
@@ -162,6 +178,8 @@ void remote_start(remote_t *r, double now) {
     r->pid = (int)pid;
     r->running = 1;
     r->off = 0;
+    r->started_at = now;
+    rlog(r, "拉起 ssh（第 %d 次尝试）", r->failures + 1);
 }
 
 void remote_stop(remote_t *r) { stop_child(r); }
@@ -287,6 +305,7 @@ static int commit(remote_t *r, double now) {
     if (s->temp_c >= 0) ring_push(&s->temp_hist, s->temp_c);
     r->m = *s;
     r->last_frame = now;
+    if (!r->saw_frame) rlog(r, "已连上（主机 %s，%d 核，%d 个进程）", s->host, s->ncore, s->nproc);
     r->saw_frame = 1;
     r->failures = 0;
     return 1;
@@ -304,6 +323,7 @@ int remote_read(remote_t *r, double now) {
             continue;
         }
         if (n == 0) { /* EOF ⇒ ssh 退了 */
+            rlog(r, "ssh 已退出（收到 EOF）");
             stop_child(r);
             break;
         }
@@ -343,6 +363,7 @@ void remote_reap(remote_t *r, double now) {
         int st = 0;
         pid_t w = waitpid(r->pid, &st, WNOHANG);
         if (w == r->pid) {
+            rlog(r, "ssh 进程退出（status=%d）", WIFEXITED(st) ? WEXITSTATUS(st) : -1);
             r->pid = 0;
             r->running = 0;
             if (r->fd >= 0) {
@@ -356,10 +377,22 @@ void remote_reap(remote_t *r, double now) {
             r->next_start = now + wait_s;
         }
     }
-    /* 连上了但 30 秒没数据（对端卡死/网络黑洞）：掐了重连 */
-    if (r->running && r->saw_frame && remote_age(r, now) > 30.0) {
-        stop_child(r);
-        r->failures++;
-        r->next_start = now + 5.0;
+    /* 连上了但迟迟没有数据 ⇒ 掐了重连。
+     * ⚠️ 这里**必须**同时覆盖 saw_frame == 0 的情况：
+     *    ssh 连上了、但远端探针没起来（对方刚重启 / perl 挂了 / 卡在认证），
+     *    连接就一直挂着、一帧都收不到 ⇒ 面板永远停在「离线」。
+     *    我第一版只判 `saw_frame && age > 30` ⇒ 首次连不上就永久卡死（真机踩到）。
+     * 判据：从未收到帧时，连接存活超过 20 秒即视为失败；收到过帧后，30 秒无新帧视为失败。 */
+    if (r->running) {
+        double limit = r->saw_frame ? 30.0 : 20.0;
+        double base = r->saw_frame ? r->last_frame : r->started_at;
+        if (base > 0 && now - base > limit) {
+            rlog(r, "%s %.0fs 无数据 ⇒ 掐掉重连", r->saw_frame ? "连续" : "连接后", now - base);
+            stop_child(r);
+            r->failures++;
+            double wait_s = 2.0 * (double)(r->failures > 4 ? 16 : (1 << (r->failures - 1)));
+            if (wait_s > 30.0) wait_s = 30.0;
+            r->next_start = now + wait_s;
+        }
     }
 }

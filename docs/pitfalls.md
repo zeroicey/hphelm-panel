@@ -199,3 +199,49 @@ lightdm 退回 greeter 并把 VT 切到 tty8 ⇒ 自研面板被藏在后面（�
 
 **判据**：外部脚本取 `--dump` 的某个字段一律**按前缀 grep**，不要依赖行序：
 `printf '%s\n' "$dump" | grep '^panel_idle=' | tail -1`。
+
+### 20. 远程采集「连上了但没数据」会永久卡死（面板一直显示离线）
+
+`remote_reap()` 原来只在 `saw_frame && age > 30` 时掐掉子进程重连。
+但「ssh 建立成功、远端探针却没起来」这条路径**永远不会进入那个分支**：
+
+```
+ssh 连上 → 等远端 perl 的 stdout → 远端 perl 挂了/没起来 → 永远没有数据 → saw_frame 一直是 0
+        ⇒ 既不重连、也不报错，面板就永远停在「离线」
+```
+
+2026-10-21 真机踩到：hpcore 本身完全正常（ping 通、ssh 通、load 0.15），
+只有面板那一列的绿点变成了红点，而且**重启面板才恢复**。
+
+**正解**：把「从未收到帧」也算失败，只是阈值更短：
+
+```c
+double limit = r->saw_frame ? 30.0 : 20.0;
+double base  = r->saw_frame ? r->last_frame : r->started_at;
+if (base > 0 && now - base > limit) { /* 掐掉 + 退避重连 */ }
+```
+
+**判据**（用一个「能连上但永不输出」的假 ssh 就能复现）：
+
+```sh
+mkdir -p /tmp/fakebin && printf '#!/bin/sh\nsleep 3600\n' > /tmp/fakebin/ssh && chmod +x /tmp/fakebin/ssh
+PATH=/tmp/fakebin:$PATH ./hphelm-panel --state panel --remote hpcore
+# 期望 20 秒内看到：连接后 20s 无数据 ⇒ 掐掉重连 → 拉起 ssh（第 2 次尝试）
+```
+
+### 21. 运行态没有日志 ⇒ 线上故障只能靠猜
+
+远程采集原来**只在 `--dump` 里输出信息**，运行态的 ssh 断开/重连/超时**一声不响**。
+所以「面板显示离线」时，能拿到的只有「进程还在、屏幕上是红点」——查不下去。
+
+**正解**：`rlog()` 在每次**状态变迁**时打一行（拉起 / 已连上 / EOF / 进程退出 / 超时重连）。
+正常一天几行，不刷屏；故障时就是完整的证据链：
+
+```
+[16:26:42] 远程 hpcore: 拉起 ssh（第 1 次尝试）
+[16:26:44] 远程 hpcore: 已连上（主机 hpcore，16 核，391 个进程）
+[16:25:06] 远程 hpcore: ssh 已退出（收到 EOF）
+[16:25:06] 远程 hpcore: 拉起 ssh（第 1 次尝试）
+```
+
+**判据**：`pkill -x hphelm-panel` 后 `tail /tmp/hphelm-panel.log` 必须能看到上面这两种行。

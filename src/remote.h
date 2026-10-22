@@ -29,6 +29,7 @@ typedef struct {
     int failures;         /* 连续启动失败次数（退避用） */
     double next_start;    /* 下次允许启动的时刻（monotonic 秒） */
     double last_frame;    /* 最近一帧到达的时刻（monotonic 秒） */
+    double started_at;    /* 本次子进程拉起的时刻（判「连上但没数据」用） */
     size_t off;           /* 接收缓冲里已写入的字节数 */
     char buf[R_BUF];
     metrics_t stg;        /* 正在拼的那一帧（收到 E 才提交） */

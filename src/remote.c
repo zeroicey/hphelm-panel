@@ -27,6 +27,13 @@
 
 /* 状态变迁日志：只在**变化时**打一行（正常一天几行，不刷屏）。
  * ⚠️ 没有这个日志，线上出现「离线」时无从查起 —— 2026-10-21 就是靠猜才找到原因的。 */
+/* 失败日志节流：前 3 次全打，之后每 10 次打一次。
+ * 为什么要它：2026-10-21 的「拉起→秒杀」循环在 10 分钟里写了 44 行，
+ * 而会话启动时的日志轮转只看 1 MiB 阈值 ⇒ 长期故障会把日志写满。 */
+static int want_fail_log(int failures) {
+    return failures <= 3 || (failures % 10) == 0;
+}
+
 static void rlog(const remote_t *r, const char *fmt, ...) {
     char t[32];
     time_t tt = time(NULL);
@@ -116,7 +123,10 @@ static void stop_child(remote_t *r) {
 int remote_fd(const remote_t *r) { return r->enabled ? r->fd : -1; }
 
 double remote_age(const remote_t *r, double now) {
-    if (!r->saw_frame) return -1;
+    if (!r->saw_frame) return -1; /* 从没连上过 */
+    /* 本次连接还没收到帧（例如刚从桌面回到面板）⇒ 也在「连接中」，
+       不要拿上一次连接留下的时间戳显示成「离线 300s」（那是误导）。 */
+    if (r->running && r->started_at > r->last_frame) return -1;
     return now - r->last_frame;
 }
 
@@ -179,7 +189,8 @@ void remote_start(remote_t *r, double now) {
     r->running = 1;
     r->off = 0;
     r->started_at = now;
-    rlog(r, "拉起 ssh（第 %d 次尝试）", r->failures + 1);
+    if (want_fail_log(r->failures + 1))
+        rlog(r, "拉起 ssh（第 %d 次尝试）", r->failures + 1);
 }
 
 void remote_stop(remote_t *r) { stop_child(r); }
@@ -303,9 +314,14 @@ static int commit(remote_t *r, double now) {
     ring_push(&s->rx_hist, s->rx_bps);
     ring_push(&s->tx_hist, s->tx_bps);
     if (s->temp_c >= 0) ring_push(&s->temp_hist, s->temp_c);
+    /* 本次连接的第一帧 ⇒ 记一行（每次重连都会记，数量有界；不靠 failures 判，
+       因为「桌面↔面板」的正常切换不会累加 failures） */
+    int first_of_conn = r->last_frame < r->started_at;
     r->m = *s;
     r->last_frame = now;
-    if (!r->saw_frame) rlog(r, "已连上（主机 %s，%d 核，%d 个进程）", s->host, s->ncore, s->nproc);
+    if (first_of_conn)
+        rlog(r, "%s（主机 %s，%d 核，%d 个进程）", r->saw_frame ? "已恢复" : "已连上", s->host,
+             s->ncore, s->nproc);
     r->saw_frame = 1;
     r->failures = 0;
     return 1;
@@ -363,7 +379,8 @@ void remote_reap(remote_t *r, double now) {
         int st = 0;
         pid_t w = waitpid(r->pid, &st, WNOHANG);
         if (w == r->pid) {
-            rlog(r, "ssh 进程退出（status=%d）", WIFEXITED(st) ? WEXITSTATUS(st) : -1);
+            if (want_fail_log(r->failures + 1))
+                rlog(r, "ssh 进程退出（status=%d）", WIFEXITED(st) ? WEXITSTATUS(st) : -1);
             r->pid = 0;
             r->running = 0;
             if (r->fd >= 0) {
@@ -384,10 +401,18 @@ void remote_reap(remote_t *r, double now) {
      *    我第一版只判 `saw_frame && age > 30` ⇒ 首次连不上就永久卡死（真机踩到）。
      * 判据：从未收到帧时，连接存活超过 20 秒即视为失败；收到过帧后，30 秒无新帧视为失败。 */
     if (r->running) {
-        double limit = r->saw_frame ? 30.0 : 20.0;
-        double base = r->saw_frame ? r->last_frame : r->started_at;
+        /* ⚠️ 基准必须是「**本次连接**的最后存活证据」，即 max(拉起时刻, 最近一帧)。
+         *    我上一版写成 `saw_frame ? last_frame : started_at`：
+         *    saw_frame 是**历史性**的（这台机连过），但 last_frame 可能是几十分钟前留下的。
+         *    于是「桌面回面板 → 重新拉起 ssh」时，新连接在**同一秒**就被判成
+         *    「连续 269 秒无数据」并杀掉 ⇒ 无限「拉起→秒杀」循环（2026-10-21 真机踩到）。
+         *    判据：`已连上` 之后必须至少活过一个 limit 周期，不能立刻出现「无数据 ⇒ 掐掉」。 */
+        int got_frame = r->last_frame > r->started_at; /* 本次连接收到过帧吗 */
+        double base = got_frame ? r->last_frame : r->started_at;
+        double limit = got_frame ? 30.0 : 20.0;
         if (base > 0 && now - base > limit) {
-            rlog(r, "%s %.0fs 无数据 ⇒ 掐掉重连", r->saw_frame ? "连续" : "连接后", now - base);
+            if (want_fail_log(r->failures + 1))
+                rlog(r, "%s %.0fs 无数据 ⇒ 掐掉重连", got_frame ? "连续" : "连接后", now - base);
             stop_child(r);
             r->failures++;
             double wait_s = 2.0 * (double)(r->failures > 4 ? 16 : (1 << (r->failures - 1)));

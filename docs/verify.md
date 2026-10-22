@@ -209,3 +209,34 @@ python3 -c "print(f'{(($b-$a)*10)/20000*100:.2f}% of one core')"
 
 **报数字时必须一起写**：窗口长度 · load average · 是否含 `--remote`。
 优化前后的对比必须**在同一窗口内交替**（A10s B10s A10s B10s 取中位数），不许串行跑两轮。
+
+## 十一、远程采集链路的回归判据（每次改 `remote.[ch]` 必跑）
+
+这条链有**三种**失败形态，必须分别验，不能只验一种（2026-10-21 就只验了一种，漏掉两个真 bug）：
+
+```sh
+# ── 形态 1：正常连接
+./hphelm-panel --state panel --remote hpcore
+# 期望 <5s：# 拉起 ssh（第 1 次尝试） → 已连上（主机 hpcore，16 核，N 个进程）
+
+# ── 形态 2：桌面 ↔ 面板 来回切（**最容易漏的一种**）
+pid=$(pgrep -x hphelm-panel)
+kill -USR1 $pid; sleep 3     # 进登录页 ⇒ ssh 子进程应消失
+kill -USR2 $pid; sleep 8     # 回面板 ⇒ 应重新拉起并「已恢复」
+# 判据：不得出现「无数据 ⇒ 掐掉重连」紧跟在同一秒（那是我踩过的「拉起→秒杀」死循环）
+grep -c "无数据 ⇒ 掐掉" /tmp/hphelm-panel.log   # 期望 0
+
+# ── 形态 3：连上了但永远没数据（对方探针没起来）
+mkdir -p /tmp/fakebin && printf '#!/bin/sh\nsleep 3600\n' > /tmp/fakebin/ssh && chmod +x /tmp/fakebin/ssh
+PATH=/tmp/fakebin:$PATH ./hphelm-panel --state panel --remote hpcore
+# 期望 20s 内：「连接后 20s 无数据 ⇒ 掐掉重连」→「拉起 ssh（第 2 次尝试）」
+rm -rf /tmp/fakebin
+```
+
+**三个坑，分别对应一种形态**（都不报错，只能靠日志）：
+
+| 形态 | 症状 | 根因 |
+| --- | --- | --- |
+| 2 | 面板显示离线，日志疯狂「拉起→连续 269s 无数据→掐掉」 | 超时基准用了**历史**的 `last_frame`，不是本次连接的 |
+| 3 | 面板永久离线，日志什么都没有 | 超时判据漏了 `saw_frame == 0` 这条路径 |
+| 1 | — | （基线，用来对照前两种） |

@@ -73,3 +73,38 @@ PATH=/tmp/fakebin:$PATH ./hphelm-panel --state panel --remote hpcore
 >
 > **状态机必须有变迁日志。** 没有日志的采集层，出故障时只能靠猜；
 > 而「只在 --dump 里能看见」等于运行态没有可观测性。
+
+---
+
+## 追加：修完形态 ③ 又引入形态 ②（同一天，第二轮）
+
+修「连上但没数据」时我把基准写成：
+
+```c
+double base = r->saw_frame ? r->last_frame : r->started_at;   /* ❌ */
+```
+
+`saw_frame` 是**历史性**的（这台机连过），而 `last_frame` 可能是几十分钟前留下的。
+于是「桌面 → 回面板」重新拉起 ssh 时，新连接在**同一秒**就被判成「连续 269 秒无数据」并杀掉：
+
+```
+[17:22:02] 状态 DESKTOP → PANEL
+[17:22:02] 远程 hpcore: 拉起 ssh（第 1 次尝试）
+[17:22:02] 远程 hpcore: 连续 269s 无数据 ⇒ 掐掉重连     ← 同一秒！
+[17:22:04] 远程 hpcore: 拉起 ssh（第 2 次尝试）
+...                                                    ← 无限循环，退避到 30s 一次
+```
+
+**正确写法**：基准 = 「**本次连接**的最后存活证据」= `max(started_at, last_frame)`：
+
+```c
+int got_frame = r->last_frame > r->started_at;   /* 本次连接收到过帧吗 */
+double base = got_frame ? r->last_frame : r->started_at;
+double limit = got_frame ? 30.0 : 20.0;
+```
+
+**教训（比 bug 本身重要）**：
+- **「历史状态」和「本次连接状态」必须分开**。`saw_frame` 是「曾经成功过」，不是「这次活着」。
+- **修 A 形态必须回归 B 形态**。我当时只测了「杀远端探针」（形态 1 的变体）和「假 ssh」（形态 3），
+  恰好漏掉用户实际操作的形态 2（锁屏再回来）—— 而那才是这台机 7×24 的日常循环。
+- 判据要写进 `docs/verify.md` 第十一节，三种形态每次必跑。

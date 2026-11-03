@@ -287,8 +287,19 @@ static void set_state(int s) {
 static void dpms(int on) {
     /* on=1 开屏；on=0 关屏 */
     Display *d = dpy;
-    char cmd[128];
-    snprintf(cmd, sizeof cmd, "xset dpms force %s", on ? "on" : "off");
+    char cmd[192];
+    if (on && CFG_SLEEP_OFF <= 0) {
+        /* 「永不关屏」不只是「本程序不去关」：X server 侧有它自己的屏保与 DPMS 定时器。
+         * 2026-11-03 实测（hpopi5b kiosk，无键鼠）：X 默认 `Screen Saver timeout=600s` +
+         * `DPMS Standby/Suspend/Off=600s` ⇒ 开机 10 分钟后显示器自己黑屏。
+         * 而且**单单 `xset -dpms` 不够**：本次这行 `xset dpms force on` 会把 DPMS 重新启用。
+         * 所以每次点亮都把策略重新钉一遍，并且**把三个超时设成 0**（0 = 该超时被禁用，
+         * 实测之后即使再来 `force on` 或被 `+dpms` 启用，超时仍然是 0）。 */
+        snprintf(cmd, sizeof cmd,
+                 "xset s off; xset s noblank; xset dpms force on; xset dpms 0 0 0; xset -dpms");
+    } else {
+        snprintf(cmd, sizeof cmd, "xset dpms force %s", on ? "on" : "off");
+    }
     if (system(cmd) != 0) { /* 忽略 */ }
     screen_off = !on;
     (void)d;

@@ -76,7 +76,50 @@ sub procs {
 }
 
 # ---------------- 网卡（有全局 IPv4 的 en* > wl* > 其它） ----------------
+sub addrv4 {
+    my ($n) = @_;
+    socket(my $s, PF_INET, SOCK_DGRAM, 0) or return '';
+    my $packed = pack('a16', $n);
+    if (defined ioctl($s, 0x8915, $packed)) {    # SIOCGIFADDR
+        close $s;
+        return '' if substr($packed, 20, 2) eq "\0\0";
+        return join '.', unpack 'C4', substr($packed, 20, 4);
+    }
+    close $s;
+    return '';
+}
+
+# 默认路由所在网卡：/proc/net/route 里 Destination=00000000 的那一行。
+# ⚠️ 2026-11-03 踩到：hpcore 的 enp3s0 上挂着渗透测试时代的残留地址 10.99.0.1/24，
+#    而原先「按 en* 前缀挑第一个有 IPv4 的」正好挑中它 ⇒ 面板把生产机显示成
+#    10.99.0.1/enp3s0。判据：显示的 IP 必须是「能出网的那块网卡」的地址。
+sub default_route_iface {
+    open my $r, '<', '/proc/net/route' or return '';
+    my $hdr = <$r>;
+    my $best = '';
+    my $best_metric;
+    while (my $line = <$r>) {
+        my @f = split ' ', $line;
+        next unless @f >= 8;
+        next unless $f[1] eq '00000000';    # Destination = default
+        my $metric = hex($f[6]);
+        if (!defined $best_metric || $metric < $best_metric) {
+            $best = $f[0];
+            $best_metric = $metric;
+        }
+    }
+    close $r;
+    return $best;
+}
+
 sub iface_ip {
+    # ① 优先：默认路由网卡（这才是「这台机对外是谁」）
+    my $dr = default_route_iface();
+    if ($dr ne '') {
+        my $ip = addrv4($dr);
+        return ($dr, $ip) if $ip ne '';
+    }
+    # ② 兜底：原来的启发式（按前缀排序挑第一个有 IPv4 的网卡）
     my $best = '';
     my $rank0 = 0;
     opendir my $d, '/sys/class/net' or return ('', '');
@@ -85,24 +128,11 @@ sub iface_ip {
     for my $n (@names) {
         my $rank = $n =~ /^en/ ? 3 : $n =~ /^wl/ ? 2 : 1;
         next if $rank < $rank0 || ($rank == $rank0 && $best ne '');
-        socket(my $s, PF_INET, SOCK_DGRAM, 0) or next;
-        my $packed = pack('a16', $n);
-        next unless defined ioctl($s, 0x8915, $packed);    # SIOCGIFADDR
-        close $s;
-        next if substr($packed, 20, 2) eq "\0\0";          # 没有 IPv4
+        next if addrv4($n) eq '';
         $best  = $n;
         $rank0 = $rank;
     }
-    my $ip = '';
-    if ($best ne '') {
-        socket(my $s, PF_INET, SOCK_DGRAM, 0);
-        my $packed = pack('a16', $best);
-        if (defined ioctl($s, 0x8915, $packed)) {
-            $ip = join '.', unpack 'C4', substr($packed, 20, 4);
-        }
-        close $s;
-    }
-    return ($best, $ip);
+    return ($best, $best eq '' ? '' : addrv4($best));
 }
 
 # PSI：/proc/pressure/{cpu,memory,io} 第一行的 avg10

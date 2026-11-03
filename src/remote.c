@@ -120,6 +120,22 @@ static void stop_child(remote_t *r) {
     r->off = 0;
 }
 
+/* 重连退避 —— **唯一出口**。
+ * ⚠️ 2026-10-25 的教训（代价：11 分钟 55,000+ 次 SSH，把对端 sshd 的 PerSourcePenalties
+ *    打到永久拉黑）：当时只给 `remote_reap()`（waitpid 路径）加了退避，忘了
+ *    `remote_read()` 读到 EOF 的路径 ⇒ 「拉起→对端秒拒→EOF→立刻再拉起」紧循环。
+ *    根因是「按进程退出原因分支写退避」；现在所有失败路径统一过这里。
+ * ⚠️ `stop_child()` 只负责「停」，不兼职「安排何时重试」——改了它会让人以为自动有退避。
+ * 退避曲线：2 → 4 → 8 → 16 → 30 秒封顶（与历史行为一致）。 */
+static void backoff(remote_t *r, double now) {
+    if (r->failures < 1000000) r->failures++;
+    int f = r->failures < 1 ? 1 : r->failures;
+    double wait_s = 2.0 * (double)(f > 4 ? 16 : (1 << (f - 1)));
+    if (wait_s > 30.0) wait_s = 30.0;
+    r->next_start = now + wait_s;
+    if (want_fail_log(f)) rlog(r, "%.0f 秒后重连（第 %d 次失败）", wait_s, f);
+}
+
 int remote_fd(const remote_t *r) { return r->enabled ? r->fd : -1; }
 
 double remote_age(const remote_t *r, double now) {
@@ -341,11 +357,13 @@ int remote_read(remote_t *r, double now) {
         if (n == 0) { /* EOF ⇒ ssh 退了 */
             rlog(r, "ssh 已退出（收到 EOF）");
             stop_child(r);
+            backoff(r, now);   /* ⚠️ 必须退避：对端秒拒时这里会每毫秒触发一次 */
             break;
         }
         if (errno == EAGAIN || errno == EWOULDBLOCK) break;
         if (errno == EINTR) continue;
         stop_child(r);
+        backoff(r, now);       /* read 出错同理 */
         break;
     }
     if (!got) return 0;
@@ -388,10 +406,7 @@ void remote_reap(remote_t *r, double now) {
                 r->fd = -1;
             }
             r->off = 0;
-            r->failures++;
-            double wait_s = 2.0 * (double)(r->failures > 4 ? 16 : (1 << (r->failures - 1)));
-            if (wait_s > 30.0) wait_s = 30.0;
-            r->next_start = now + wait_s;
+            backoff(r, now);
         }
     }
     /* 连上了但迟迟没有数据 ⇒ 掐了重连。

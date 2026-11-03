@@ -1,7 +1,7 @@
 # hphelm-panel —— 运维面板 + 自研锁屏（X11 + cairo + pango，无 GUI 工具包）
 CC      ?= gcc
 CFLAGS  ?= -O2 -Wall -Wextra
-PKGS     = x11 x11-xcb xscrnsaver cairo cairo-xlib pangocairo
+PKGS     = x11 xscrnsaver cairo cairo-xlib pangocairo
 CFLAGS  += $(shell pkg-config --cflags $(PKGS))
 LDLIBS  += $(shell pkg-config --libs $(PKGS)) -lm
 
@@ -10,6 +10,10 @@ AUTH = hphelm-auth
 OBJ  = src/panel.o src/metrics.o src/remote.o src/view.o src/view_panel.o src/view_login.o src/auth.o
 
 all: $(BIN) $(AUTH)
+
+# 只构建面板本体（不含 setuid 的 PAM 认证助手）。
+# 用途：纯显示终端（--kiosk，没有登录页）不需要任何特权代码，也就不该装 libpam-dev。
+panel: $(BIN)
 
 $(BIN): $(OBJ)
 	$(CC) $(CFLAGS) -o $@ $(OBJ) $(LDLIBS)
@@ -31,4 +35,4 @@ install: all
 clean:
 	rm -f $(OBJ) $(BIN) $(AUTH)
 
-.PHONY: all clean install
+.PHONY: all panel clean install

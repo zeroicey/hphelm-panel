@@ -266,23 +266,24 @@ static void draw_host(cairo_t *cr, const view_ctx_t *v, const metrics_t *m, doub
 }
 
 /* ============================ 顶栏 ============================ */
-static void draw_topbar(cairo_t *cr, const view_ctx_t *v, const metrics_t *local,
-                        const metrics_t *remote, const view_feed_t *feed) {
+static void draw_topbar(cairo_t *cr, const view_ctx_t *v, const metrics_t *left,
+                        const char *lrole, const metrics_t *right, const view_feed_t *rfeed,
+                        const char *rrole) {
     const double mx = L_MARGIN;
     const double mw = v->lw - 2 * mx;
     char b[64];
     double x = mx;
 
-    x += v_text(cr, x, L_TOP_Y, v_fd_title(), C_MAUVE, "%s", local->host) + 10;
-    x += v_text(cr, x, L_TOP_Y + 1, v_fd_label(), C_OVERLAY1, "本地") + 24;
-    if (remote) {
-        x += v_text(cr, x, L_TOP_Y, v_fd_title(), C_LAVENDER, "%s", remote->host) + 10;
-        uint32_t c = feed->online ? C_GREEN : (feed->age_s < 0 ? C_RED : C_YELLOW);
-        x += v_text(cr, x, L_TOP_Y + 1, v_fd_label(), c, "生产 %s",
-                    feed->online ? "●" : "○") +
+    x += v_text(cr, x, L_TOP_Y, v_fd_title(), C_MAUVE, "%s", left->host) + 10;
+    x += v_text(cr, x, L_TOP_Y + 1, v_fd_label(), C_OVERLAY1, "%s", lrole) + 24;
+    if (right && rfeed) {
+        x += v_text(cr, x, L_TOP_Y, v_fd_title(), C_LAVENDER, "%s", right->host) + 10;
+        uint32_t c = rfeed->online ? C_GREEN : (rfeed->age_s < 0 ? C_RED : C_YELLOW);
+        x += v_text(cr, x, L_TOP_Y + 1, v_fd_label(), c, "%s %s", rrole,
+                    rfeed->online ? "●" : "○") +
              24;
     }
-    strftime(b, sizeof b, "%Y-%m-%d %H:%M:%S", localtime(&local->now));
+    strftime(b, sizeof b, "%Y-%m-%d %H:%M:%S", localtime(&left->now));
     double tw2 = 0;
     v_text_right_w(cr, mx + mw, L_TOP_Y + 1, v_fd_label(), C_SUBTEXT1, "%s", b);
     tw2 = v_text_w(v_fd_label(), b);
@@ -293,13 +294,15 @@ static void draw_topbar(cairo_t *cr, const view_ctx_t *v, const metrics_t *local
     v_rule(cr, mx, L_RULE1_Y, mw);
 }
 
-void view_panel_draw(cairo_t *cr, const view_ctx_t *v, const metrics_t *local,
-                     const metrics_t *remote, const view_feed_t *feed) {
+void view_panel_draw(cairo_t *cr, const view_ctx_t *v,
+                     const metrics_t *left, const view_feed_t *lfeed, const char *lrole,
+                     const metrics_t *right, const view_feed_t *rfeed, const char *rrole) {
     const double mx = L_MARGIN;
     const double mw = v->lw - 2 * mx;
+    const int left_is_remote = (lfeed && lfeed->enabled);
 
     if (!v->bg_done) v_bg(cr, v->lw, v->lh);
-    draw_topbar(cr, v, local, remote, feed);
+    draw_topbar(cr, v, left, lrole, (right && rfeed && rfeed->enabled) ? right : NULL, rfeed, rrole);
 
     /* 列宽：两台主机等宽，进程榜吃掉剩余量（⚠️ 不要写死第三列的宽度） */
     const double host_w = mw * L_HOST_FRAC;
@@ -317,10 +320,12 @@ void view_panel_draw(cairo_t *cr, const view_ctx_t *v, const metrics_t *local,
         cairo_fill(cr);
     }
 
-    draw_host(cr, v, local, x_local, host_w, C_MAUVE, "本机", 0, 1, -1, NULL);
-    if (remote && feed && feed->enabled) {
-        draw_host(cr, v, remote, x_remote, host_w, C_LAVENDER, "生产", 1, feed->online,
-                  feed->age_s, feed->target);
+    draw_host(cr, v, left, x_local, host_w, C_MAUVE, lrole,
+              left_is_remote, left_is_remote ? lfeed->online : 1,
+              left_is_remote ? lfeed->age_s : -1, left_is_remote ? lfeed->target : NULL);
+    if (right && rfeed && rfeed->enabled) {
+        draw_host(cr, v, right, x_remote, host_w, C_LAVENDER, rrole, 1, rfeed->online,
+                  rfeed->age_s, rfeed->target);
     } else {
         /* 没配生产服务器：**留白 + 一句实话**，不要拿本机数据填满右列 */
         v_text(cr, x_remote, L_H_NAME_Y, v_fd_value(), C_OVERLAY0, "未配置");
@@ -331,14 +336,17 @@ void view_panel_draw(cairo_t *cr, const view_ctx_t *v, const metrics_t *local,
     }
 
     /* ---------- 进程榜（一列，两段） ---------- */
+    char lbl[80];
+    snprintf(lbl, sizeof lbl, "%s进程", lrole);
     double py = L_BODY_Y;
-    draw_proc_section(cr, local, "本机进程", C_YELLOW, x_proc, py, proc_w, L_PROC_ROWS);
+    draw_proc_section(cr, left, lbl, C_YELLOW, x_proc, py, proc_w, L_PROC_ROWS);
     py += L_PROC_SEC_H;
-    if (remote && feed && feed->enabled) {
+    if (right && rfeed && rfeed->enabled) {
         cairo_rectangle(cr, x_proc, py + L_PROC_SEC_GAP / 2, proc_w, 1.0);
         v_set_rgb(cr, C_SURFACE1, 0.45);
         cairo_fill(cr);
         py += L_PROC_SEC_GAP;
-        draw_proc_section(cr, remote, "生产进程", C_PEACH, x_proc, py, proc_w, L_PROC_ROWS);
+        snprintf(lbl, sizeof lbl, "%s进程", rrole);
+        draw_proc_section(cr, right, lbl, C_PEACH, x_proc, py, proc_w, L_PROC_ROWS);
     }
 }

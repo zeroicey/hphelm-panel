@@ -101,8 +101,11 @@ void v_fmt_uptime(double s, char *out, size_t n);
 
 /* ---- 两个视图 ---- */
 /* local = 本机；remote = 生产服务器（未配置时传 NULL）；feed = 远程采集状态 */
-void view_panel_draw(cairo_t *cr, const view_ctx_t *v, const metrics_t *local,
-                     const metrics_t *remote, const view_feed_t *feed);
+/* 两列主机：左边一列可能是「本机」（lfeed->enabled=0）也可能是第二台远程机（enabled=1）；
+ * 右边一列总是生产服务器（right/rfeed 为 NULL 则不画）。lrole/rrole 是列标题里的角色字。*/
+void view_panel_draw(cairo_t *cr, const view_ctx_t *v,
+                     const metrics_t *left, const view_feed_t *lfeed, const char *lrole,
+                     const metrics_t *right, const view_feed_t *rfeed, const char *rrole);
 void view_login_draw(cairo_t *cr, const view_ctx_t *v, const metrics_t *m, const char *user,
                      int pwlen, const char *err, int busy, int cursor_on, int wait_s);
 

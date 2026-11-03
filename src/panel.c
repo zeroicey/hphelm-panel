@@ -75,6 +75,8 @@ static char CFG_REMOTE[64] = "";      /* 生产服务器 ssh 目标；空 = 不�
  * 格式：一行一个 key=value，`#` 注释，只认 remote=。 */
 static const char *CFG_FILE = "/etc/hphelm-panel.conf";
 static int FORCE_STATE = -1;
+static int CFG_KIOSK = 0;  /* --kiosk：纯显示器（永不进登录页/桌面，输入一律忽略） */
+static char CFG_REMOTE2[64] = ""; /* 左列第二台远程机（--remote2；空 = 左列仍显示本机） */
 static int DBG = 0;               /* HPHELM_PANEL_DEBUG=1：每秒打印主循环仪表 */
 static long dbg_iter, dbg_ev, dbg_poll_rd, dbg_poll_to, dbg_poll_oth, dbg_redraw, dbg_sample;
 static long dbg_remote_frames;
@@ -92,10 +94,24 @@ static void read_conf_file(void) {
         char *p = line;
         while (*p == ' ' || *p == '\t') p++;
         if (*p == '#' || *p == '\n' || !*p) continue;
-        if (strncmp(p, "remote=", 7) != 0) continue;
-        char *v = p + 7;
-        v[strcspn(v, " \t\r\n")] = 0;
-        if (v[0] && !CFG_REMOTE[0]) snprintf(CFG_REMOTE, sizeof CFG_REMOTE, "%s", v);
+        if (strncmp(p, "remote=", 7) == 0 && !CFG_REMOTE[0]) {
+            char *v = p + 7;
+            v[strcspn(v, " \t\r\n")] = 0;
+            if (v[0]) snprintf(CFG_REMOTE, sizeof CFG_REMOTE, "%s", v);
+            continue;
+        }
+        if (strncmp(p, "remote2=", 8) == 0 && !CFG_REMOTE2[0]) {
+            char *v = p + 8;
+            v[strcspn(v, " \t\r\n")] = 0;
+            if (v[0]) snprintf(CFG_REMOTE2, sizeof CFG_REMOTE2, "%s", v);
+            continue;
+        }
+        if (strncmp(p, "kiosk=", 6) == 0) {
+            char *v = p + 6;
+            v[strcspn(v, " \t\r\n")] = 0;
+            CFG_KIOSK = (v[0] == '1' || v[0] == 'y' || v[0] == 'Y' || v[0] == 't');
+            continue;
+        }
     }
     fclose(f);
 }
@@ -115,7 +131,11 @@ static cairo_t *cr;
 static PangoLayout *lay;
 static metrics_t M;              /* 本机 */
 static remote_t R;               /* 生产服务器（--remote；未配置时 enabled=0） */
-static view_feed_t FEED;         /* 给视图看的采集健康度 */
+static view_feed_t FEED;
+/* 第二台远程机（--remote2）：把面板搬到「只负责显示」的机器上时，左列再显示「本机」
+ * 毫无意义（本机就是块显示器）⇒ 左列改为另一台真机。复用同一套 ssh 探针。*/
+static remote_t R2;
+static view_feed_t FEED2;         /* 给视图看的采集健康度 */
 static int scr;
 static Pixmap back;                /* 离屏后备缓冲（X 服务器端 pixmap，双缓冲用） */
 static Pixmap bgpix;               /* 渐变底（整屏画一次，每帧 XCopyArea 复制过来） */
@@ -241,6 +261,9 @@ static void win_hide(void) {
 }
 
 static void set_state(int s) {
+    /* ⭐ kiosk：永不离开面板。把「谁在叫切状态」的 4 个调用点（按键/移动/点击/SIGUSR1）
+     *   全部收口在这里 —— 逐个加守卫是 bug 温床（漏一个就冒登录页）。 */
+    if (CFG_KIOSK && s != ST_PANEL) return;
     if (s == state) return;
     logf_("状态 %s → %s（idle=%.1fs）", state_name(state), state_name(s), x_idle());
     state = s;
@@ -283,14 +306,20 @@ static unsigned long long content_sig(void) {
         p = (const unsigned char *)&R.m;
         for (size_t i = 0; i < sizeof R.m; i++) { h ^= p[i]; h *= 1099511628211ULL; }
     }
+    if (R2.enabled) {
+        p = (const unsigned char *)&R2.m;
+        for (size_t i = 0; i < sizeof R2.m; i++) { h ^= p[i]; h *= 1099511628211ULL; }
+    }
 #define MIX(v) do { h ^= (unsigned long long)(v); h *= 1099511628211ULL; } while (0)
     MIX(state);
     MIX(pwlen);
     MIX(busy);
     MIX(cursor_on);
     MIX(FEED.online);
+    MIX(FEED2.online);
     /* 离线秒数按**整秒**入签名：远端一断，屏幕要能持续走「离线 Ns」而不是冻住 */
     MIX(FEED.age_s >= 0 ? (long)FEED.age_s : -1L);
+    MIX(FEED2.age_s >= 0 ? (long)FEED2.age_s : -1L);
     MIX(retry_at > 0 ? retry_at - (int)now_s() : 0);
     for (const unsigned char *e = (const unsigned char *)g_err; *e; e++) {
         h ^= *e;
@@ -313,7 +342,11 @@ static void render(void) {
     cairo_save(cr);
     cairo_scale(cr, SCALE, SCALE);
     if (state == ST_PANEL) {
-        view_panel_draw(cr, &v, &M, R.enabled ? &R.m : NULL, &FEED);
+        /* 左列：配了 --remote2 就用第二台远程机（纯显示器场景），否则仍是本机 */
+        view_feed_t lf = R2.enabled ? FEED2 : (view_feed_t){0};
+        view_panel_draw(cr, &v, R2.enabled ? &R2.m : &M, &lf, R2.enabled ? R2.target : "本机",
+                        R.enabled ? &R.m : NULL, R.enabled ? &FEED : NULL,
+                        R.enabled ? R.target : NULL);
     } else {
         int wait = (retry_at > 0) ? (int)(retry_at - now_s()) : 0;
         if (wait < 0) wait = 0;
@@ -512,6 +545,9 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--sleep-off") && i + 1 < argc) CFG_SLEEP_OFF = atof(argv[++i]);
         else if (!strcmp(argv[i], "--remote") && i + 1 < argc)
             snprintf(CFG_REMOTE, sizeof CFG_REMOTE, "%s", argv[++i]);
+        else if (!strcmp(argv[i], "--kiosk")) CFG_KIOSK = 1;
+        else if (!strcmp(argv[i], "--remote2") && i + 1 < argc)
+            snprintf(CFG_REMOTE2, sizeof CFG_REMOTE2, "%s", argv[++i]);
         else if (!strcmp(argv[i], "--lock") && i + 1 < argc) CFG_LOCK = argv[++i];
         else if (!strcmp(argv[i], "--state") && i + 1 < argc) {
             if (!strcmp(argv[i + 1], "desktop")) FORCE_STATE = ST_DESKTOP;
@@ -532,6 +568,8 @@ int main(int argc, char **argv) {
     metrics_init(&M);
     remote_init(&R, CFG_REMOTE);
     FEED.enabled = R.enabled;
+    remote_init(&R2, CFG_REMOTE2);
+    FEED2.enabled = R2.enabled;
     FEED.age_s = -1;
     snprintf(FEED.target, sizeof FEED.target, "%s", R.target);
     auth_default_user(g_user, sizeof g_user);
@@ -635,7 +673,7 @@ int main(int argc, char **argv) {
     surface_init();   /* 建离屏后备 pixmap + cairo 上下文（不直接画窗口） */
 
     /* 初始状态 */
-    state = (FORCE_STATE >= 0) ? FORCE_STATE : ST_DESKTOP;
+    state = CFG_KIOSK ? ST_PANEL : ((FORCE_STATE >= 0) ? FORCE_STATE : ST_DESKTOP);
     state_enter = now_s();
     char so[32] = {0};
     sleep_off_desc(so, sizeof so);
@@ -728,6 +766,19 @@ int main(int argc, char **argv) {
             FEED.age_s = remote_age(&R, tw);
             if (FEED.age_s < 0 && R.running) FEED.age_s = -1;
         }
+        /* 左列第二台远程机：与 R 完全同构（同一套退避/半帧/停启规则） */
+        if (R2.enabled) {
+            double tw = now_s();
+            if (state == ST_PANEL) {
+                remote_start(&R2, tw);
+            } else if (R2.running) {
+                remote_stop(&R2);
+            }
+            remote_reap(&R2, tw);
+            FEED2.online = remote_online(&R2, tw);
+            FEED2.age_s = remote_age(&R2, tw);
+            if (FEED2.age_s < 0 && R2.running) FEED2.age_s = -1;
+        }
 
         /* --- 状态机 --- */
         double idle = x_idle();
@@ -775,15 +826,22 @@ int main(int argc, char **argv) {
         tick++;
         dbg_iter++;
         dbg_tick();
-        /* poll 两个源：X 连接 + 生产服务器的 ssh 管道（非阻塞，绝不引入第二个线程） */
-        struct pollfd p[2];
+        /* poll 三个源：X 连接 + 两台远程机的 ssh 管道（非阻塞，绝不引入第二个线程） */
+        struct pollfd p[3];
         p[0].fd = ConnectionNumber(dpy);
         p[0].events = POLLIN;
         p[0].revents = 0;
         p[1].fd = remote_fd(&R);
         p[1].events = POLLIN;
         p[1].revents = 0;
-        int nfd = (p[1].fd >= 0) ? 2 : 1;
+        p[2].fd = remote_fd(&R2);
+        p[2].events = POLLIN;
+        p[2].revents = 0;
+        int nfd = 1;
+        if (p[1].fd >= 0) nfd = 2;
+        if (p[2].fd >= 0) nfd = 3;
+        /* 第二个源存在但第三个不存在时，p[2] 必须在末尾——用“紧凑”排列避开空洞 */
+        if (p[1].fd < 0 && p[2].fd >= 0) { p[1] = p[2]; p[2].fd = -1; }
         int timeout = state == ST_DESKTOP ? 1000 : 500;
         int pr = poll(p, (unsigned)nfd, timeout);
         if (DBG) {
@@ -792,11 +850,16 @@ int main(int argc, char **argv) {
             else dbg_poll_oth++;
         }
         if (nfd > 1 && (p[1].revents & (POLLIN | POLLHUP | POLLERR))) {
-            if (remote_read(&R, now_s())) dbg_remote_frames++;
+            if (p[1].fd == remote_fd(&R) ? remote_read(&R, now_s()) : remote_read(&R2, now_s()))
+                dbg_remote_frames++;
+        }
+        if (nfd > 2 && (p[2].revents & (POLLIN | POLLHUP | POLLERR))) {
+            if (remote_read(&R2, now_s())) dbg_remote_frames++;
         }
     }
 
     remote_stop(&R);
+    remote_stop(&R2);
     cairo_destroy(cr);
     cairo_surface_destroy(surf);
     if (back) XFreePixmap(dpy, back);

@@ -8,7 +8,7 @@
  *
  * 技术选型（实测，详见 README 与 runbooks/hphelm.md）：
  *   X11 + cairo + pango，**不套 GUI 工具包**；最小程序 PSS 7.4 MiB / 2 线程。
- *   认证走自建 setuid 助手 hphelm-auth（PAM `login` 栈），**不再用 lightdm 的 greeter**。
+ *   认证走自建 setuid 助手 hpopi5b-auth（PAM `login` 栈），**不再用 lightdm 的 greeter**。
  *
  * 状态机：
  *   DESKTOP ──idle≥panel_idle──▶ PANEL ──input(≥input_grace)──▶ LOGIN
@@ -22,7 +22,7 @@
  *   固定特效循环；每幕自带内容签名，与旧版一样「内容不变不重绘」。
  *   转场用两块离屏缓冲（失败才分配）做切片/淡出，不直接画窗口。
  *
- * 用法： hphelm-panel [--scale N] [--panel-idle S] [--login-back S]
+ * 用法： hpopi5b-panel [--scale N] [--panel-idle S] [--login-back S]
  *                     [--input-grace S] [--sleep-off S] [--dump] [--once]
  *                     [--remote HOST]  （生产服务器：ssh 目标；空/缺省 = 不采集）
  *                     [--remote2 HOST] （第二台真机：纯显示器场景下替换左列本机）
@@ -31,7 +31,7 @@
  *                     [--transition FX] （cut|dip|push|cover；缺省每轮换一种）
  *                     [--list-scenes]  （列出幕的 id 与名字后退出）
  *                     [--state desktop|panel|login]   （测试用：强制初始状态）
- *                     [--lock PATH]                   （单实例锁路径，默认 /tmp/hphelm-panel.lock）
+ *                     [--lock PATH]                   （单实例锁路径，默认 /tmp/hpopi5b-panel.lock）
  *                     [--theme auto|day|night]        （auto = 按固定时刻自动切；默认 auto）
  *                     [--theme-day HH:MM]             （白天起点，默认 07:00）
  *                     [--theme-night HH:MM]           （夜间起点，默认 19:00）
@@ -84,9 +84,9 @@ static double CFG_INPUT_GRACE = 1.2;  /* 进面板后多久才接受“唤醒”
 static double CFG_SLEEP_OFF = 0;      /* 面板空闲多久关屏；**0 或负数 = 永不关屏**（当前默认） */
 static char CFG_REMOTE[64] = "";      /* 生产服务器 ssh 目标；空 = 不采集（默认） */
 /* 配置文件：**改主机名不该需要编辑 root 的会话包装器**（那是 /usr/local/bin 下的 root 文件，
- * 而且改了还得重启整个会话才生效）。优先级：--remote > HPHELM_REMOTE > 本文件。
+ * 而且改了还得重启整个会话才生效）。优先级：--remote > HPOPI5B_REMOTE > 本文件。
  * 格式：一行一个 key=value，`#` 注释，只认 remote=。 */
-static const char *CFG_FILE = "/etc/hphelm-panel.conf";
+static const char *CFG_FILE = "/etc/hpopi5b-panel.conf";
 static int FORCE_STATE = -1;
 static int CFG_KIOSK = 0;  /* --kiosk：纯显示器（永不进登录页/桌面，输入一律忽略） */
 static char CFG_REMOTE2[64] = ""; /* 左列第二台远程机（--remote2；空 = 左列仍显示本机） */
@@ -106,13 +106,13 @@ static int theme_fade_pending, theme_fade_swapped;
 static double theme_check_at;
 #define THEME_FADE 0.45                /* 单向淡变时长（半程换色） */
       /* GitHub 趋势缓存文件（trending=）；空 = 用 scene 默认路径 */
-static int DBG = 0;               /* HPHELM_PANEL_DEBUG=1：每秒打印主循环仪表 */
+static int DBG = 0;               /* HPOPI5B_PANEL_DEBUG=1：每秒打印主循环仪表 */
 static long dbg_iter, dbg_ev, dbg_poll_rd, dbg_poll_to, dbg_poll_oth, dbg_redraw, dbg_sample;
 static long dbg_remote_frames;
 static long dbg_evtype[64];
 static double dbg_ms_render, dbg_ms_blit, dbg_ms_sig;
 
-static const char *CFG_LOCK = "/tmp/hphelm-panel.lock";  /* 单实例锁（--lock 可换，便于 Xvfb 并行测试） */
+static const char *CFG_LOCK = "/tmp/hpopi5b-panel.lock";  /* 单实例锁（--lock 可换，便于 Xvfb 并行测试） */
 
 /* 读配置文件里的 remote=（找不到文件就静默跳过） */
 /* "07:30" → 450（分钟）；格式不对返回 -1 */
@@ -796,11 +796,11 @@ int main(int argc, char **argv) {
     signal(SIGUSR1, on_sig); /* 立即锁屏（进登录页） */
     signal(SIGUSR2, on_sig); /* 立即回面板 */
     signal(SIGPIPE, SIG_IGN);
-    DBG = getenv("HPHELM_PANEL_DEBUG") != NULL;
-    /* 生产服务器优先级：--remote > $HPHELM_REMOTE > /etc/hphelm-panel.conf */
+    DBG = getenv("HPOPI5B_PANEL_DEBUG") != NULL;
+    /* 生产服务器优先级：--remote > $HPOPI5B_REMOTE > /etc/hpopi5b-panel.conf */
     if (!CFG_REMOTE[0]) read_conf_file();
-    if (!CFG_REMOTE[0] && getenv("HPHELM_REMOTE"))
-        snprintf(CFG_REMOTE, sizeof CFG_REMOTE, "%s", getenv("HPHELM_REMOTE"));
+    if (!CFG_REMOTE[0] && getenv("HPOPI5B_REMOTE"))
+        snprintf(CFG_REMOTE, sizeof CFG_REMOTE, "%s", getenv("HPOPI5B_REMOTE"));
     metrics_init(&M);
     remote_init(&R, CFG_REMOTE);
     FEED.enabled = R.enabled;
@@ -862,7 +862,7 @@ int main(int argc, char **argv) {
         return 0;
     }
 
-    /* 单实例锁：两个 hphelm-panel 会互相抢抬窗（都 override-redirect），
+    /* 单实例锁：两个 hpopi5b-panel 会互相抢抬窗（都 override-redirect），
        屏幕会变成两张界面互相覆盖 —— 实测踩到（手工起一个 + 守护循环又起一个）。
        ⚠️ 必须放在 `--dump` 之后：dump 不需要 X、也不碰窗口，却会被正在跑的实例挡住
        （实测：deploy 里的 `--dump` 自检返回 3、打不出参数，看着像「默认值被改回去了」）。 */
@@ -870,7 +870,7 @@ int main(int argc, char **argv) {
     if (!dump && !once) {          /* --dump / --once 不建窗口，不需要抢锁 */
         lockfd = open(CFG_LOCK, O_CREAT | O_RDWR, 0644);
         if (lockfd >= 0 && flock(lockfd, LOCK_EX | LOCK_NB) != 0) {
-            fprintf(stderr, "hphelm-panel: 已有实例在运行（%s 被锁）⇒ 退出\n", CFG_LOCK);
+            fprintf(stderr, "hpopi5b-panel: 已有实例在运行（%s 被锁）⇒ 退出\n", CFG_LOCK);
             return 3;
         }
     }
@@ -883,7 +883,7 @@ int main(int argc, char **argv) {
 
     dpy = XOpenDisplay(NULL);
     if (!dpy) {
-        fprintf(stderr, "hphelm-panel: 无法打开 X display（DISPLAY=%s）\n",
+        fprintf(stderr, "hpopi5b-panel: 无法打开 X display（DISPLAY=%s）\n",
                 getenv("DISPLAY") ? getenv("DISPLAY") : "(null)");
         return 1;
     }
@@ -899,7 +899,7 @@ int main(int argc, char **argv) {
     win = XCreateWindow(dpy, root, 0, 0, (unsigned)SW, (unsigned)SH, 0,
                         CopyFromParent, InputOutput, CopyFromParent,
                         CWOverrideRedirect | CWBackPixel, &attrs);
-    XStoreName(dpy, win, "hphelm-panel");
+    XStoreName(dpy, win, "hpopi5b-panel");
     XSelectInput(dpy, win,
                  ExposureMask | KeyPressMask | ButtonPressMask | PointerMotionMask |
                      StructureNotifyMask | VisibilityChangeMask);

@@ -4,8 +4,8 @@
 
 ## Context
 
-- 2026-10-18 时源码权威在 `hpcore:/data/dev/hphelm-panel`，部署靠 `rsync` 推到 `hphelm` 再 `ssh hphelm 'make && sudo make install'`。
-- 2026-10-19 整仓迁到 hphelm：**源码目录 = 部署目录 = `/data/dev/hphelm-panel`**。
+- 2026-10-18 时源码权威在 `hpcore:/data/dev/hpopi5b-panel`，部署靠 `rsync` 推到 `hphelm` 再 `ssh hphelm 'make && sudo make install'`。
+- 2026-10-19 整仓迁到 hphelm：**源码目录 = 部署目录 = `/data/dev/hpopi5b-panel`**。
 - 在 hphelm 上跑老脚本会**必然失败**：`~/.ssh/config` 里没有 `hphelm` 这个 Host，`ssh hphelm` ⇒ `Host key verification failed`。
 - 交接目标（用户原话）：「他们开发完也知道如何进行更新系统屏保不用麻烦你了」。
 
@@ -20,8 +20,8 @@
 ## Decision
 
 **选 B。** `tools/deploy.sh` 只做七件本地事：环境自检 → `make` → 备份旧二进制到
-`/usr/local/bin/hphelm-panel.prev` → `sudo make install` + 逐字节校验 → `--dump` 语义自检 →
-`pkill -x hphelm-panel` 重启并确认 pid 变化 → 判据。`--check` 只读，`--no-restart` 不下线。
+`/usr/local/bin/hpopi5b-panel.prev` → `sudo make install` + 逐字节校验 → `--dump` 语义自检 →
+`pkill -x hpopi5b-panel` 重启并确认 pid 变化 → 判据。`--check` 只读，`--no-restart` 不下线。
 
 ## Consequences
 

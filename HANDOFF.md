@@ -1,4 +1,4 @@
-# 交接：hphelm-panel（运维面板 + 自研锁屏）
+# 交接：hpopi5b-panel（运维面板 + 自研锁屏）
 
 > **本轮状态（第七轮：双主机看板 + 三列版式，2026-10-21）**：面板现在**同屏显示本机与生产服务器**
 > （`--remote hpcore`，ssh 长连接 + 远端只读 perl 探针，**不在 hpcore 装任何东西**），
@@ -9,13 +9,38 @@
 > 再 ssh 上去」改成**本机原地部署**（旧路径在本机必失败）+ 七阶段判据；`docs/deploy.md`
 > 重写成「更新系统屏保」runbook；项目记忆库 **`.ai/`** 由 engram v0.5.0 初始化并填入内容。
 >
-> **项目现在的形态**：源码目录 = 部署目录 = **`hphelm:/data/dev/hphelm-panel`**（2026-10-19 整仓迁入），
-> 公开镜像 `github.com/zeroicey/hphelm-panel`。
+> **项目现在的形态**：源码目录 = 部署目录 = **`hphelm:/data/dev/hpopi5b-panel`**（2026-10-19 整仓迁入），
+> 公开镜像 `github.com/zeroicey/hpopi5b-panel`。
 >
 > **前五轮成果一句话**：功能跑通（桌面↔面板↔登录）→ 消闪（离屏 pixmap）→ 修掉自激空转
 > （CPU 33~49% → 0.60%）→ 无卡片紧凑版式 + 进程榜 40 条 → 立为独立项目（仓库 + 交接文档）。
 >
 > **最后更新：2026-10-21（第六轮）。**
+
+---
+
+## 第十轮：改名 `hpopi5b-panel` + 归位 `/data/dev/project/`（2026-11-05）
+
+**用户口径**（m00001）：项目不该平铺在 `/data/dev/` 顶层，应在 `/data/dev/project/`；`hphelm-panel`
+这个名字已随 `hphelm` 退役而失真，改名 **`hpopi5b-panel`**，副作用（代码/仓库/生产/kb/项目记忆）一并处理。
+
+**做了什么**
+
+- 目录：`/data/dev/hphelm-panel` → **`/data/dev/project/hpopi5b-panel`**（同批把 `chime`、`herdr-lark`、
+  `cormorant` 归位到 `project/`；`cormorant` 等它的会话结束才动）。
+- GitHub：`zeroicey/hphelm-panel` → **`zeroicey/hpopi5b-panel`**（`gh repo rename`，旧地址自动 301）。
+- 代码内标识统一：二进制 `hpopi5b-panel`、认证助手 `hpopi5b-auth`（`src/hpopi5b-auth.c`）、
+  `HPOPI5B_{PANEL_DEBUG,REMOTE,PROBE,AUTH_BIN}`、安装路径 `/usr/local/{lib,share}/hpopi5b-panel/`、
+  `/etc/hpopi5b-panel.conf`、`/var/{log,cache,lock}/hpopi5b-panel*`、单元 `hpopi5b-kiosk.service` +
+  `hpopi5b-trending.{service,timer}`。
+- **纯历史称谓保持原样**：旧工位机 `hphelm`、已废弃的 `hphelm-session` / `hphelm-vt-guard` / `hphelm-lockd`
+  不改写（它们描述的是 2026-10-27 之前真实存在过的东西）。
+- 生产（hpopi5b）同批迁移：旧路径留 `.bak-20261105`；二进制由真机 `make panel` 重建后安装。
+- 文档：`README` / `AGENTS.md` / `docs/deploy.md` 的「三十秒版」已切到 **hpcmd 改 → push → hpopi5b 编译安装**；
+  旧 hphelm 原地部署段落标注为历史。
+
+**判据**：`hpopi5b-kiosk` active、`pgrep -cx hpopi5b-panel`=1、`DP-1` 带 `*`、`probe-frames` 0 闪帧、
+trending timer 下一次触发正常、日志无 X Error。
 
 ---
 
@@ -34,22 +59,22 @@
   `clock`（200pt HH:MM + 日期 + 分钟进度线）·`ambient`（近黑，一分钟才重画一次）。
 - `panel.c`：`render()` 改成「幕 → back」；转场时才懒分配 `altpix`（**+8 MiB 仅在人真的看轮换时**）；
   转场期间 `poll` 超时 500 ms → 30 ms；底部统一小点 HUD（只有轮换开着才画）。
-- 参数/配置：`--scene --rotate --transition --list-scenes`；`/etc/hphelm-panel.conf` 支持
+- 参数/配置：`--scene --rotate --transition --list-scenes`；`/etc/hpopi5b-panel.conf` 支持
   `rotate= scene= transition=`（先读文件、再让命令行覆盖）。
 - `Makefile` 加 5 个 obj，模式规则加 `scene.h` 依赖。
 
 **判据（2026-11-05，真机 hpopi5b 已上屏）**
 
 - 构建：真机 `make panel` 零告警（aarch64 / gcc 11）。
-- 真机 `:0`：`probe-frames 60` ⇒ **>30% 变化帧 = 0**；`pgrep -cx hphelm-panel = 1`、`tty0/active = tty1`、
+- 真机 `:0`：`probe-frames 60` ⇒ **>30% 变化帧 = 0**；`pgrep -cx hpopi5b-panel = 1`、`tty0/active = tty1`、
   日志无 X Error / BadMatch / Segmentation。
 - 轮换确实在跑：间隔 33 s 抓两张帧，`diffpx = 351,706 (17.0%)`（同一幕内不会这样）。
 - 性能（:9 上同条件对比新旧二进制，各 15 s）：**新 4.40% / 旧 4.46%**、RSS 18.2 MiB、线程 1。
   （`:0` 上量到过 6.7%，那是同时跑 `probe-frames`（每秒 ~15 次 XGetImage 全屏）造成的，不要拿那个数当基线。）
 - 转场：四种特效各跑 7 s 无 X 错误；push 的中间帧确认「A 在左、B 从右露出」。
 - 四幕真机截图逐张看过；`hero` 里 hpopi5b 的 TEMP 显示「—」是**诚实的空态**（Pi 没有可读温度传感器）。
-- 部署落点（真机事实）：源 `/root/hphelm-panel`、二进制 `/usr/local/lib/hphelm-panel/hphelm-panel`
-  （`hphelm-panel.prev` 是 11-03 的 82,176 B 旧版）+ `hphelm-kiosk.service`（xinit 起 Xorg :0 vt1）。
+- 部署落点（真机事实）：源 `/root/hpopi5b-panel`、二进制 `/usr/local/lib/hpopi5b-panel/hpopi5b-panel`
+  （`hpopi5b-panel.prev` 是 11-03 的 82,176 B 旧版）+ `hpopi5b-kiosk.service`（xinit 起 Xorg :0 vt1）。
   ⚠️ 仓库里的 `tools/deploy.sh` 仍指向 hphelm 的 `/usr/local/bin`，**在 hpopi5b 上不能用**。
 
 **追加（同日）：`trending` 幕（GitHub 趋势）**
@@ -61,7 +86,7 @@
 - `scene_trending.c`：只读缓存，`stat` 比对 mtime/size 才重读；sig 混入「分钟」（相对时间要更新）；
   按真实像素宽截断（`v_text_h` 同款思路：CJK 不能按字符数算宽）；总数 `313,652 → 313.7k`。
   空态写「还没同步 + 该跑哪个 service」，**不放假数据**。
-- `systemd/hphelm-trending.timer`：`OnBootSec=2min` + `OnUnitActiveSec=3h`（日榜一天只抓一次太旧）。
+- `systemd/hpopi5b-trending.timer`：`OnBootSec=2min` + `OnUnitActiveSec=3h`（日榜一天只抓一次太旧）。
 - 真机：timer 已 enable，首次抓取 16 条；转场轮到第 3 幕时实拍确认列表/涨星/总数/HUD 全部正确。
 - 踩到：`atol("313,652")` 在逗号处停下 ⇒ 总数全变成「313★」。**千分位字符串不要直接 atol**。
 
@@ -100,7 +125,7 @@
 - 坑：`pango_layout_set_height(-2)` 之后必须把 width/height/wrap/ellipsize **复位**，
   否则后续 `v_text()` 全被两行宽度约束带着走。
 
-**下一轮**：让 `tools/deploy.sh` 认出 hpopi5b（路径/服务名 + 安装 `fetch-trending.py` 与 timer），并把 `--rotate` 写进 `/etc/hphelm-panel.conf`
+**下一轮**：让 `tools/deploy.sh` 认出 hpopi5b（路径/服务名 + 安装 `fetch-trending.py` 与 timer），并把 `--rotate` 写进 `/etc/hpopi5b-panel.conf`
 （当前靠 kiosk 默认 30 s）；按肉眼感受决定 25/30/45。
 
 ---
@@ -115,11 +140,11 @@
 
 ## 一、30 秒上手
 
-**源码目录 = 部署目录 = `hphelm:/data/dev/hphelm-panel`**（2026-10-19 整仓迁入；旧的
-`hpcore:/data/dev/hphelm-panel` 与 `hphelm:~/projects/panel2` 都已不存在）：
+**源码目录 = 部署目录 = `hphelm:/data/dev/hpopi5b-panel`**（2026-10-19 整仓迁入；旧的
+`hpcore:/data/dev/hpopi5b-panel` 与 `hphelm:~/projects/panel2` 都已不存在）：
 
 ```bash
-cd /data/dev/hphelm-panel
+cd /data/dev/hpopi5b-panel
 make                     # 需 pkg-config: x11 x11-xcb xscrnsaver cairo cairo-xlib pangocairo
 tools/deploy.sh --check  # 看部署会做什么（只读）
 tools/deploy.sh          # 构建 → 备份旧二进制 → 安装 → 重启面板 → 跑判据（本机原地）
@@ -133,15 +158,15 @@ tools/deploy.sh          # 构建 → 备份旧二进制 → 安装 → 重启�
 
 ```bash
 Xvfb :9 -screen 0 1920x1080x24 -ac &
-DISPLAY=:9 ./hphelm-panel --state panel --lock /tmp/xv9.lock   # ⚠️ --lock 必须换，否则和真机实例抢锁
-DISPLAY=:9 import -window $(DISPLAY=:9 xdotool search --name hphelm-panel | tail -1) /tmp/shot.png
+DISPLAY=:9 ./hpopi5b-panel --state panel --lock /tmp/xv9.lock   # ⚠️ --lock 必须换，否则和真机实例抢锁
+DISPLAY=:9 import -window $(DISPLAY=:9 xdotool search --name hpopi5b-panel | tail -1) /tmp/shot.png
 python3 tools/render-ascii.py /tmp/shot.png 22 22              # 看版式
 ```
 
 **看效果需要重启进程**（`kill -USR2` 只切状态、**不会重载二进制**）：
 
 ```bash
-pkill -x hphelm-panel        # 会话包装器的守护循环会在 ~1s 内用新二进制把它拉回来
+pkill -x hpopi5b-panel        # 会话包装器的守护循环会在 ~1s 内用新二进制把它拉回来
 # ⚠️ 别用 `pkill -f`：它会匹配到执行它的那个 ssh shell 自己（已踩四次，见 docs/pitfalls.md）
 # ⚠️ 重启会让桌面露出 1~2 秒（面板 unmapped）；`rc=143` 不计失败，红线 2 安全
 # ⚠️ 在 Xvfb 里测时不要 `pkill -x`：会连真机实例一起杀（同名），请按 DISPLAY 挑 pid
@@ -151,11 +176,11 @@ pkill -x hphelm-panel        # 会话包装器的守护循环会在 ~1s 内用�
 
 ```bash
 Xvfb :9 -screen 0 1920x1080x24 -ac &
-DISPLAY=:9 ./hphelm-panel --state panel     # 或 --state login
-DISPLAY=:9 import -window "$(DISPLAY=:9 xdotool search --name hphelm-panel | tail -1)" /tmp/p.png
+DISPLAY=:9 ./hpopi5b-panel --state panel     # 或 --state login
+DISPLAY=:9 import -window "$(DISPLAY=:9 xdotool search --name hpopi5b-panel | tail -1)" /tmp/p.png
 ```
 
-**不需要 X 的自检**：`./hphelm-panel --dump`（打印采集层数据）。
+**不需要 X 的自检**：`./hpopi5b-panel --dump`（打印采集层数据）。
 
 **验证渲染（我看不到图，所以走像素判据）**：
 
@@ -181,7 +206,7 @@ magick /tmp/p.png -crop ... ; # 见 README 的方法
 | `src/metrics.[ch]` | 480 | 数据采集（只读 `/proc`、`/sys`，不 fork） | 加新指标时 |
 | `src/panel.c` | 420 | X11 窗口、事件、**状态机**、主循环 | 改交互时 |
 | `src/auth.[ch]` | 90 | 与助手通信（密码只走 stdin） | 一般不动 |
-| `src/hphelm-auth.c` | 120 | setuid PAM 助手 | 一般不动 |
+| `src/hpopi5b-auth.c` | 120 | setuid PAM 助手 | 一般不动 |
 
 **坐标体系**：所有绘制都在「逻辑像素」下进行，主循环里 `cairo_scale(SCALE, SCALE)`，
 `SCALE=1.48`（屏 141.8 DPI ÷ 96）。所以 `theme.h` 里的 `L_MARGIN=18` 实际是 18×1.48≈27 物理像素。
@@ -237,8 +262,8 @@ magick /tmp/p.png -crop ... ; # 见 README 的方法
 
 | 项 | 做法 |
 | --- | --- |
-| **实体** | `hpcore:/data/dev/hphelm-panel`（开发域实体根；git bundle 搬全历史，非 squash）· 部署副本 `hphelm:/data/dev/hphelm-panel`（2026-10-19 起） |
-| **仓库** | **`https://github.com/zeroicey/hphelm-panel`**（public、无 license，与其余 40 个仓库一致）；描述里就写明「不是通用产品」 |
+| **实体** | `hpcore:/data/dev/hpopi5b-panel`（开发域实体根；git bundle 搬全历史，非 squash）· 部署副本 `hphelm:/data/dev/hpopi5b-panel`（2026-10-19 起） |
+| **仓库** | **`https://github.com/zeroicey/hpopi5b-panel`**（public、无 license，与其余 40 个仓库一致）；描述里就写明「不是通用产品」 |
 | **README** | 重写：公开定位 + 实测选型表 + **「这不是给谁用的」适配前提表**（屏幕/桌面栈/认证/会话入口/红线/字体/数据源/机队口径）+ 文档地图 + 状态与边界 |
 | **AGENTS.md** | **给专职维护 AI 的工作指南**：三条红线 · 硬约束（性能预算/不引工具包）· 工作流 · 每轮验收判据 · 设计系统要点 · 代码地图 · 不要做什么 · 交付纪律 · 环境速查 |
 | **docs/** | `architecture.md`（状态机/双缓冲/采样/认证/数据源）· `design.md`（无卡片+紧凑+坐标归 theme.h）· `verify.md`（**看不到图怎么验**）· `deploy.md`（部署/判据/回滚）· `pitfalls.md`（14 条坑，每条带判据） |
@@ -257,23 +282,23 @@ lightdm+bspwm+picom、专用 PAM 服务、会话包装器、三条运维红线�
 | 项 | 做法 | 判据 |
 | --- | --- | --- |
 | **部署链本土化** | `tools/deploy.sh` 重写：**去掉 rsync 与 `ssh hphelm`**，改成七阶段原地部署（自检 → 构建 → 备份旧二进制 → 安装+校验 → `--dump` 语义自检 → 重启并确认 pid 变化 → 判据）。新增 `--check` / `--no-restart` | 本机三次真跑全过：VT=tty7 · greeter=0 · 面板=1 · 源码⇄已装逐字节一致 · 助手 `4755 root:root` · `sleep_off=off` · 帧差分 `0` 帧 >30% |
-| **回滚有凭据了** | 安装前若内容不同 ⇒ 自动留 `/usr/local/bin/hphelm-panel.prev` | 文档给出「三层回滚」（二进制 / 系统文件 / 退回 lightdm greeter） |
+| **回滚有凭据了** | 安装前若内容不同 ⇒ 自动留 `/usr/local/bin/hpopi5b-panel.prev` | 文档给出「三层回滚」（二进制 / 系统文件 / 退回 lightdm greeter） |
 | **`docs/deploy.md` 重写** | 从「rsync 到另一台机」改成 **「更新系统屏保」runbook**：屏保到底是什么 · 文件清单 · 开发循环 · 七阶段 · 判据表 · 三层回滚 · 六件绝不能做的事 · 交付清单 | 全文 10 节，命令均可直接粘贴 |
-| **项目记忆库 `.ai/`** | engram v0.5.0（本地构建 `/data/dev/engram/build/src/cli.js`）`init --root /data/dev/hphelm-panel --notes "…"` ⇒ `.ai/` + `.engram/` + `.agents/skills`，契约追加进 `AGENTS.md`（原有正文保留） | `engram doctor` / `engram dump` 通过；`.ai/CURRENT_TASK.md` · `ARCHITECTURE.md` · `runbooks/update-screensaver.md` · `decisions/` · `sessions/` 已填真实内容 |
+| **项目记忆库 `.ai/`** | engram v0.5.0（本地构建 `/data/dev/engram/build/src/cli.js`）`init --root /data/dev/hpopi5b-panel --notes "…"` ⇒ `.ai/` + `.engram/` + `.agents/skills`，契约追加进 `AGENTS.md`（原有正文保留） | `engram doctor` / `engram dump` 通过；`.ai/CURRENT_TASK.md` · `ARCHITECTURE.md` · `runbooks/update-screensaver.md` · `decisions/` · `sessions/` 已填真实内容 |
 | **文档纠偏** | `AGENTS.md` §0/§4/§8/§9 与本文 §一：删掉「源码在 hpcore、部署到 hphelm」的旧事实；新增「接手第一小时读什么」 | — |
 
 **本轮我自己在 deploy.sh 第一版里踩的三个坑（都不报错，都已修）：**
 
 1. **`pgrep -qx` 不存在** —— procps 的 pgrep 没有 `-q` 选项，它报错并返回非 0 ⇒ 脚本却当成
    「lightdm 没在跑」发了假告警。修法：`pgrep -x lightdm >/dev/null 2>&1`。
-2. **对 `/tmp/hphelm-panel.log` 全文件 grep 「连续 3 次」** ⇒ 2026-10-18 那两次事故的字符串一直
+2. **对 `/tmp/hpopi5b-panel.log` 全文件 grep 「连续 3 次」** ⇒ 2026-10-18 那两次事故的字符串一直
    躺在日志里 ⇒ **每次部署都报「面板在反复崩」**。修法：只取**最近一条 `启动：` 之后**的日志块。
 3. **CPU 窗口包含了刚启动的几秒**（启动帧全额重绘 + 首次扫进程）⇒ 读出 1.60%，而稳态是 1.1~1.4%。
    修法：先热身 3 秒再开 15 秒窗口。
 
 **⚠️ 一个待查的真问题**：CPU 实测 **1.13%–1.60%**，高于文档记录 0.60%（2026-10-18）。
 其余判据全绿（不闪、不空转、几何对、单实例）。清楚到代码里的假设**不要凭猜** ——
-正解是用 `HPHELM_PANEL_DEBUG=1` 看 it/s 与各阶段耗时，先把「重绘次数」与「单帧耗时」分开。
+正解是用 `HPOPI5B_PANEL_DEBUG=1` 看 it/s 与各阶段耗时，先把「重绘次数」与「单帧耗时」分开。
 
 **⚠️ 一个未解的交付缺口（用户裁决「先不管」）**：hphelm 的 GitHub 身份**只够推 `dotfiles`**（deploy key 一仓一把），
 所以本机 `git push origin main` 会权限失败。本轮提交只落在本地；**用户 2026-10-21 裁决：先不管，提交留本地** ——
@@ -293,8 +318,8 @@ lightdm+bspwm+picom、专用 PAM 服务、会话包装器、三条运维红线�
 | **半帧不提交** | `S`/`C`/`P` 写 `stg`，收到 `E` 才整体提交 | 断线时显示的是**上一整帧 + 离线 Ns**，不是半新半旧 |
 | **退避重连** | 2→4→8→16→30 秒封顶；离线时列标题旁写「离线 Ns」 | 远端 `pkill perl` ⇒ 5 秒内列变黄、>60 秒变红，恢复后自动接上 |
 | **三列版式** | `本机 │ 生产 │ 进程榜`；两台用**同一个 `draw_host()`** 画（版面/口径必然对称）；进程榜一列两段（各 12 条） | 量像素：两列各 648px、间距 38px、进程榜 24 行（12+12）、行距 24 |
-| **配置** | `/etc/hphelm-panel.conf` 的 `remote=`；优先级 `--remote` > `$HPHELM_REMOTE` > 文件 | 改主机名不用编辑 root 的会话包装器 |
-| **部署脚本** | 安装 `probe-remote.pl` 到 `/usr/local/share/hphelm-panel/`（644，非可执行）+ 校验；`HPHELM_REMOTE=…` 时顺带验链路 | `tools/deploy.sh` 真机跑通，七阶段全过 |
+| **配置** | `/etc/hpopi5b-panel.conf` 的 `remote=`；优先级 `--remote` > `$HPOPI5B_REMOTE` > 文件 | 改主机名不用编辑 root 的会话包装器 |
+| **部署脚本** | 安装 `probe-remote.pl` 到 `/usr/local/share/hpopi5b-panel/`（644，非可执行）+ 校验；`HPOPI5B_REMOTE=…` 时顺带验链路 | `tools/deploy.sh` 真机跑通，七阶段全过 |
 
 ### 本轮的性能工作（从「文档 0.60%」追到「实测 1.0~1.4%」）
 
@@ -375,7 +400,7 @@ UTF-8 截断切半）⇒ `.ai/pitfalls/cases/2026-10-21-three-column-layout-sile
 7. **颜色**：`C_BASE` 大面积填充 `#1e1e2e`，与登录页的渐变风格不统一（面板是平涂，登录页是渐变）。
 
 **功能 / 其他**
-8. **「立即锁屏」只有信号**：`kill -USR1`。可以在 `sxhkd` 里包一个快捷键（`pkill -USR1 -x hphelm-panel`）。
+8. **「立即锁屏」只有信号**：`kill -USR1`。可以在 `sxhkd` 里包一个快捷键（`pkill -USR1 -x hpopi5b-panel`）。
 9. ~~**DPMS 关屏后唤不醒**：`sleep_off=3600` 后关屏，理论上任意输入会 `dpms(1)`；
    但实测未验证（需要等 1 小时）。可以调小 `--sleep-off` 测一次。~~
    **2026-10-19 关闭**：用户裁决定位是「看板要 7×24 一直显示」⇒ 默认 `sleep_off=0`（永不关屏），
@@ -388,7 +413,7 @@ UTF-8 截断切半）⇒ `.ai/pitfalls/cases/2026-10-21-three-column-layout-sile
     第七轮的三列版式是**按 1297×729 逻辑像素**调的 —— 换到 1080p 以下的屏会挤（要重调 `L_*`）。
 12. ~~**CPU 0.8%**：主要花在每秒约 50 段 pango 文字整形。两个杠杆：PangoLayout 缓存、区域局部重绘。~~
     **2026-10-18 重测：CPU 0.60% of one core**（1 Hz 采样；绘制 ~3.5ms/帧、上屏 ~0.05ms、签名 ~0.05ms）
-    ⇒ 这一条优先级已降。真要再降就先看 `HPHELM_PANEL_DEBUG=1` 的耗时分布。
+    ⇒ 这一条优先级已降。真要再降就先看 `HPOPI5B_PANEL_DEBUG=1` 的耗时分布。
 13. **面板只在 :0 上**：换接口（DP-2→HDMI）后尺寸变化由 `ConfigureNotify` 处理，但没实测过。
 
 ---
@@ -403,8 +428,8 @@ UTF-8 截断切半）⇒ `.ai/pitfalls/cases/2026-10-21-three-column-layout-sile
 **新增的两个能力**（下一轮直接用）：
 
 ```bash
-HPHELM_PANEL_DEBUG=1 ./hphelm-panel --state panel   # 主循环仪表：it/s · poll 结果 · 事件类型 · 重绘/采样 · 各阶段耗时
-./hphelm-panel --lock /tmp/x.lock ...               # 单实例锁可换 ⇒ Xvfb 测试不必杀真机实例
+HPOPI5B_PANEL_DEBUG=1 ./hpopi5b-panel --state panel   # 主循环仪表：it/s · poll 结果 · 事件类型 · 重绘/采样 · 各阶段耗时
+./hpopi5b-panel --lock /tmp/x.lock ...               # 单实例锁可换 ⇒ Xvfb 测试不必杀真机实例
 ```
 
 **本轮踩到的两条新坑（已归档 kb）**：
@@ -412,7 +437,7 @@ HPHELM_PANEL_DEBUG=1 ./hphelm-panel --state panel   # 主循环仪表：it/s · 
 - `pitfalls/2026-10-18-panel-flicker-direct-draw-no-double-buffer.md`
 - `pitfalls/2026-10-18-xcopyarea-noexpose-poll-self-sustaining-loop.md`
 
-⚠️ **本轮操作失误（记下来）**：我在 Xvfb 测试时用 `pkill -x hphelm-panel`，
+⚠️ **本轮操作失误（记下来）**：我在 Xvfb 测试时用 `pkill -x hpopi5b-panel`，
 它把**真机上正在跑的那个实例也杀了**（同名进程）⇒ 用户屏幕上的面板重启了两次
 （守护循环按「运行时长」判定 ⇒ `fails` 没被误触发、greeter 也没被招回来，红线 2 生效）。
 ⇒ **测试实例与真机实例要能区分**：现在用 `--lock` 分开锁，杀的时候要挑 pid（按 `/proc/<pid>/environ` 里的 `DISPLAY` 认）。
@@ -423,13 +448,13 @@ HPHELM_PANEL_DEBUG=1 ./hphelm-panel --state panel   # 主循环仪表：it/s · 
 
 ```bash
 # 状态机日志（每次变迁都有时间戳）
-tail -20 /tmp/hphelm-panel.log
+tail -20 /tmp/hpopi5b-panel.log
 
 # 关键判据
 cat /sys/class/tty/tty0/active                  # tty7=会话 / tty8=lightdm greeter（说明被抢了）
 pgrep -cx slick-greeter                         # 应为 0
-pgrep -c -f /usr/local/bin/hphelm-panel         # 应为 1（多了说明单实例锁失效）
-xdotool search --name hphelm-panel | wc -l      # 应为 1
+pgrep -c -f /usr/local/bin/hpopi5b-panel         # 应为 1（多了说明单实例锁失效）
+xdotool search --name hpopi5b-panel | wc -l      # 应为 1
 
 # 顶部 48px 是否有墨迹（0 = 面板盖住了 polybar）
 import -window root /tmp/w.png
@@ -463,11 +488,11 @@ sudo grep -aE "autologin|Switching to greeter" /var/log/lightdm/lightdm.log | ta
 sudo cp -a /usr/local/bin/hphelm-session.bak-prepanel /usr/local/bin/hphelm-session
 cp -a ~/.config/sxhkd/sxhkdrc.bak-prepanel ~/.config/sxhkd/sxhkdrc
 sudo /usr/local/bin/hphelm-lockd >/dev/null 2>&1 &   # 旧的空闲锁屏守护（二进制仍在）
-pkill -f /usr/local/bin/hphelm-panel
+pkill -f /usr/local/bin/hpopi5b-panel
 sudo systemctl restart lightdm
 ```
 
-**整机级归档**：`/data/backups/hphelm-panel-20261018/`
+**整机级归档**：`/data/backups/hpopi5b-panel-20261018/`
 （`panel2.bundle` 完整 git 历史 + 四处系统配置 + `RESTORE.md` 恢复清单）
 
 ⚠️ 回滚时**也要停掉 VT 守卫**，否则它会一直把 VT 往 tty7 拽：
@@ -515,7 +540,7 @@ journalctl -t hphelm-vt-guard -n 3                     # 应看到「抢到 tty8
 
 ### 另外两个同类自伤（都已修）
 
-- **日志按大小轮转**：包装器在会话启动前检查 `/tmp/hphelm-panel.log` > 1 MiB 就 `tail -c 256K`。
+- **日志按大小轮转**：包装器在会话启动前检查 `/tmp/hpopi5b-panel.log` > 1 MiB 就 `tail -c 256K`。
   （背景：我用 `rm -f /tmp/*.log` 清理时**把面板正在写的日志也删了** —— 进程仍持 fd，
   继续往已删除 inode 写，日志从此不可见且空间不释放。**删正在写的日志不报错，只会让日志「看起来空了」**。）
 - **`xset dpms 0 0 0`**：DPMS 定时关屏交给面板自己管（它才是「空闲显示」的唯一负责人），
@@ -534,6 +559,6 @@ journalctl -t hphelm-vt-guard -n 3                     # 应看到「抢到 tty8
 - `.ai/CURRENT_TASK.md`（此刻在做什么 / 卡在哪 / 下一步）——`engram dump` 也能一行拿到指纹
 - **`docs/deploy.md`**（更新系统屏保：七阶段、判据表、三层回滚、六件绝不能做的事）
 - `README.md`（本项目自述：行为、选型实测表、安全模型、六条适配前提）
-- kb `runbooks/hphelm.md` 的「运维面板（hphelm-panel）」节（机队视角 + 验收判据；kb 在 `hphelm:/data/kb`）
+- kb `runbooks/hphelm.md` 的「运维面板（hpopi5b-panel）」节（机队视角 + 验收判据；kb 在 `hphelm:/data/kb`）
 - kb 两个坑档：`2026-10-18-lockscreen-auth-reusing-login-pam-stack-*`、
   `2026-10-18-fullscreen-override-redirect-overlay-traps`

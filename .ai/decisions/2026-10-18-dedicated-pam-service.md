@@ -17,7 +17,7 @@
 | --- | --- | --- | --- |
 | A 复用 `login` 栈 | 零配置 | 带 faillock ⇒ 锁屏输错 3 次锁机（实测） | — |
 | B 复用 `system-auth` | 统一策略 | 同上，且引入更多不可控模块 | — |
-| C **专用服务 `/etc/pam.d/hphelm-auth`，只留 `pam_unix`** | 特权面与副作用最小；行为可预测 | 两行配置要跟着机器走（重建机器时得记得） | easy |
+| C **专用服务 `/etc/pam.d/hpopi5b-auth`，只留 `pam_unix`** | 特权面与副作用最小；行为可预测 | 两行配置要跟着机器走（重建机器时得记得） | easy |
 
 ## Decision
 
@@ -28,13 +28,13 @@ auth     required pam_unix.so
 account  required pam_unix.so
 ```
 
-助手 `hphelm-auth` 是唯一特权代码（`4755 root:root`，~120 行），密码只走 stdin，不落盘、不进 argv。
+助手 `hpopi5b-auth` 是唯一特权代码（`4755 root:root`，~120 行），密码只走 stdin，不落盘、不进 argv。
 
 ## Consequences
 
 - 「输错密码」只会失败，不会锁账号 —— 这是硬要求（否则一次误触就把机器锁在登录页外）。
 - 没有 faillock 的限速 ⇒ 暴力破解防护靠 sshd 那一侧与本机物理安全（本机是工位机，可接受）。
-- 重建机器时 `/etc/pam.d/hphelm-auth` 必须手工重建（`docs/deploy.md` 5.2 有原文）。
+- 重建机器时 `/etc/pam.d/hpopi5b-auth` 必须手工重建（`docs/deploy.md` 5.2 有原文）。
 
 ## Revisit when
 

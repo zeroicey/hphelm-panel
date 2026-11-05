@@ -8,8 +8,8 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-#ifndef HPHELM_AUTH_BIN
-#define HPHELM_AUTH_BIN "/usr/local/libexec/hphelm-auth"
+#ifndef HPOPI5B_AUTH_BIN
+#define HPOPI5B_AUTH_BIN "/usr/local/libexec/hpopi5b-auth"
 #endif
 
 void auth_default_user(char *out, size_t n) {
@@ -42,7 +42,7 @@ int auth_check(const char *user, const char *password) {
         /* 把 stderr 也接过去，方便把 PAM 的原因带回来 */
         dup2(pout[1], STDERR_FILENO);
         close(pin[0]); close(pin[1]); close(pout[0]); close(pout[1]);
-        execl(HPHELM_AUTH_BIN, "hphelm-auth", user, (char *)NULL);
+        execl(HPOPI5B_AUTH_BIN, "hpopi5b-auth", user, (char *)NULL);
         _exit(127);
     }
 
@@ -77,9 +77,9 @@ int auth_check(const char *user, const char *password) {
         /* 去掉换行后打日志（不含密码） */
         char *nl = strchr(buf, '\n');
         if (nl) *nl = 0;
-        fprintf(stderr, "hphelm-panel: auth fail: %s\n", buf);
+        fprintf(stderr, "hpopi5b-panel: auth fail: %s\n", buf);
     } else {
-        fprintf(stderr, "hphelm-panel: auth fail: 助手无输出（exit=%d）\n",
+        fprintf(stderr, "hpopi5b-panel: auth fail: 助手无输出（exit=%d）\n",
                 WIFEXITED(status) ? WEXITSTATUS(status) : -1);
     }
     return 0;

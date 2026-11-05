@@ -6,7 +6,7 @@
 #   tools/deploy.sh --no-restart 只构建 + 安装，不碰正在跑的面板（下次登录生效）
 #
 # 前提（2026-10-21 起）：**在 hphelm 本机跑**，源码目录就是部署目录
-#   /data/dev/hphelm-panel —— 所以没有 rsync、没有 ssh 自己连自己。
+#   /data/dev/hpopi5b-panel —— 所以没有 rsync、没有 ssh 自己连自己。
 #   （旧版 `ssh hphelm 'make && sudo make install'` 在 hphelm 上必失败：
 #    ~/.ssh/config 里没有 hphelm 这个 Host，`Host key verification failed`。）
 #
@@ -38,11 +38,11 @@ dry()  { printf '    [dry] %s\n' "$*"; }
 die()  { printf '\033[31m失败：%s\033[0m\n' "$*" >&2; exit 1; }
 ok()   { printf '\033[32m    OK %s\033[0m\n' "$*"; }
 
-INSTALLED=/usr/local/bin/hphelm-panel
-PREV=/usr/local/bin/hphelm-panel.prev
-AUTH_INSTALLED=/usr/local/libexec/hphelm-auth
-PROBE_INSTALLED=/usr/local/share/hphelm-panel/probe-remote.pl
-REMOTE_HOST="${HPHELM_REMOTE:-}"   # 有值就顺带验一次生产服务器链路
+INSTALLED=/usr/local/bin/hpopi5b-panel
+PREV=/usr/local/bin/hpopi5b-panel.prev
+AUTH_INSTALLED=/usr/local/libexec/hpopi5b-auth
+PROBE_INSTALLED=/usr/local/share/hpopi5b-panel/probe-remote.pl
+REMOTE_HOST="${HPOPI5B_REMOTE:-}"   # 有值就顺带验一次生产服务器链路
 
 # ---------------------------------------------------------------- 1/7 环境自检
 say "1/7 环境自检"
@@ -79,8 +79,8 @@ else
     n=$(grep -c 'warning:' "$log" || true)
     [ "$n" = 0 ] && ok "构建通过，0 警告" || { warn "构建有 $n 条警告（不阻断，但别把它当正常）"; grep 'warning:' "$log" | head -5; }
     rm -f "$log"
-    printf '    产物     : %s（%s 字节）\n' "$SRC/hphelm-panel" "$(stat -c %s "$SRC/hphelm-panel")"
-    printf '    GUI 工具包: %s 个（期望 0）\n' "$(ldd "$SRC/hphelm-panel" | grep -cE 'libgtk|libQt|libfltk' || true)"
+    printf '    产物     : %s（%s 字节）\n' "$SRC/hpopi5b-panel" "$(stat -c %s "$SRC/hpopi5b-panel")"
+    printf '    GUI 工具包: %s 个（期望 0）\n' "$(ldd "$SRC/hpopi5b-panel" | grep -cE 'libgtk|libQt|libfltk' || true)"
 fi
 
 # ------------------------------------------------------------ 3/7 备份旧二进制
@@ -89,7 +89,7 @@ if [ -f "$INSTALLED" ]; then
     if [ "$CHECK" = 1 ]; then
         dry "cp -a $INSTALLED $PREV   （仅当内容不同）"
     else
-        if cmp -s "$INSTALLED" "$SRC/hphelm-panel"; then
+        if cmp -s "$INSTALLED" "$SRC/hpopi5b-panel"; then
             printf '    已装的与新构建的相同，不覆盖 %s\n' "$PREV"
         else
             sudo cp -a "$INSTALLED" "$PREV"
@@ -107,7 +107,7 @@ if [ "$CHECK" = 1 ]; then
 else
     sudo make -C "$SRC" install >/dev/null
     ok "已安装 $INSTALLED + $AUTH_INSTALLED"
-    cmp -s "$SRC/hphelm-panel" "$INSTALLED" || die "安装后二进制内容不一致（源码 %s vs 已装 %s）" "$SRC/hphelm-panel" "$INSTALLED"
+    cmp -s "$SRC/hpopi5b-panel" "$INSTALLED" || die "安装后二进制内容不一致（源码 %s vs 已装 %s）" "$SRC/hpopi5b-panel" "$INSTALLED"
     ok "源码与已装二进制逐字节一致"
     [ "$(stat -c '%a %U:%G' "$AUTH_INSTALLED")" = "4755 root:root" ] \
         && ok "认证助手权限 4755 root:root" \
@@ -120,10 +120,10 @@ fi
 # ------------------------------------------------- 5/7 语义自检（不需要 X，不抢锁）
 say "5/7 语义自检：--dump（不需要 X）"
 if [ "$CHECK" = 1 ]; then
-    dry "$SRC/hphelm-panel --dump | tail -1   ⇒ 期望含 sleep_off=off（永不关屏）"
-    dry "HPHELM_REMOTE=<host> tools/deploy.sh   ⇒ 顺带验生产服务器链路"
+    dry "$SRC/hpopi5b-panel --dump | tail -1   ⇒ 期望含 sleep_off=off（永不关屏）"
+    dry "HPOPI5B_REMOTE=<host> tools/deploy.sh   ⇒ 顺带验生产服务器链路"
 else
-    dump=$("$SRC/hphelm-panel" --dump ${REMOTE_HOST:+--remote "$REMOTE_HOST"})
+    dump=$("$SRC/hpopi5b-panel" --dump ${REMOTE_HOST:+--remote "$REMOTE_HOST"})
     # ⚠️ 不要用 `tail -1`：--dump 后面可能还有别的行（远程链路一节）。
     #    按前缀取「配置行」，否则判据会因为一行日志顺序变化而假失败（已踩）。
     out=$(printf '%s\n' "$dump" | grep '^panel_idle=' | tail -1)
@@ -145,24 +145,24 @@ say "6/7 重启面板（守护循环会用新二进制拉起）"
 if [ "$RESTART" = 0 ]; then
     printf '    --no-restart：不动正在跑的实例（新版本下次登录生效）\n'
 elif [ "$CHECK" = 1 ]; then
-    dry "pkill -x hphelm-panel；等 ≤15s 让 hphelm-session 的守护循环用新二进制拉起"
+    dry "pkill -x hpopi5b-panel；等 ≤15s 让 hphelm-session 的守护循环用新二进制拉起"
 else
-    before=$(pgrep -x hphelm-panel | head -1 || true)
-    pkill -x hphelm-panel || true
+    before=$(pgrep -x hpopi5b-panel | head -1 || true)
+    pkill -x hpopi5b-panel || true
     i=0
     while [ $i -lt 15 ]; do
         sleep 1; i=$((i+1))
-        new=$(pgrep -x hphelm-panel | head -1 || true)
+        new=$(pgrep -x hpopi5b-panel | head -1 || true)
         [ -n "$new" ] && [ "$new" != "$before" ] && break
     done
-    [ -n "${new:-}" ] || die "15 秒内没有新实例起来 —— 守护循环可能没在跑（看 /tmp/hphelm-panel.log）"
+    [ -n "${new:-}" ] || die "15 秒内没有新实例起来 —— 守护循环可能没在跑（看 /tmp/hpopi5b-panel.log）"
     ok "新实例 pid=$new（旧 pid=${before:-无}）"
 fi
 
 # ------------------------------------------------------------------- 7/7 判据
 say "7/7 判据"
 if [ "$CHECK" = 1 ]; then
-    printf '    [dry] VT=tty7 · slick-greeter=0 · hphelm-panel=1 · 二进制一致 · sleep_off=off ·\n'
+    printf '    [dry] VT=tty7 · slick-greeter=0 · hpopi5b-panel=1 · 二进制一致 · sleep_off=off ·\n'
     printf '    [dry] 帧差分 >30%% 变化帧 = 0 · CPU <1%% of one core · 日志无「起来就死」\n'
     exit 0
 fi
@@ -170,10 +170,10 @@ fi
 fail=0
 vt=$(cat /sys/class/tty/tty0/active)
 greeter=$(pgrep -cx slick-greeter || true)
-panels=$(pgrep -cx hphelm-panel || true)
+panels=$(pgrep -cx hpopi5b-panel || true)
 [ "$vt" = "tty7" ]        && ok "VT=$vt"        || { warn "VT=$vt（期望 tty7 —— 有东西抢走了 VT）"; fail=1; }
 [ "$greeter" = "0" ]      && ok "slick-greeter=0" || { warn "slick-greeter=$greeter（期望 0 —— 红线 1 被碰了）"; fail=1; }
-[ "$panels" = "1" ]       && ok "hphelm-panel=1"  || { warn "hphelm-panel=$panels（期望 1 —— 单实例锁或守护循环有问题）"; fail=1; }
+[ "$panels" = "1" ]       && ok "hpopi5b-panel=1"  || { warn "hpopi5b-panel=$panels（期望 1 —— 单实例锁或守护循环有问题）"; fail=1; }
 
 if [ "$RESTART" = 0 ]; then
     printf '    （--no-restart：跳过运行态/CPU 判据）\n'
@@ -194,7 +194,7 @@ else
     # CPU：jiffies × 10ms / 窗口 ms（单位别写错，docs/verify.md 有 10 倍陷阱）
     # ⚠️ 必须跳过刚启动的几秒：启动帧会全额重绘 + 首次扫进程，窗口包含它就会读出 1.2%
     sleep 3
-    pid=$(pgrep -x hphelm-panel | head -1)
+    pid=$(pgrep -x hpopi5b-panel | head -1)
     set -- $(awk '{print $14, $15}' "/proc/$pid/stat"); u1=$1; s1=$2
     sleep 15
     set -- $(awk '{print $14, $15}' "/proc/$pid/stat"); u2=$1; s2=$2
@@ -204,13 +204,13 @@ fi
 
 # 日志：只认**当前实例**的「起来就死」与兜底开火（/tmp 的日志是跨会话追加的，
 # 历史事故的字符串会一直在里面 ⇒ 全文件 grep 会假告警，我第一版就这么误报过）
-current=$(awk '/启动：/{buf=""} {buf=buf $0 "\n"} END{printf "%s", buf}' /tmp/hphelm-panel.log 2>/dev/null || true)
+current=$(awk '/启动：/{buf=""} {buf=buf $0 "\n"} END{printf "%s", buf}' /tmp/hpopi5b-panel.log 2>/dev/null || true)
 if printf '%s' "$current" | grep -qE '连续 3 次|关屏兜底'; then
-    warn "日志里出现「起来就死 / 关屏兜底」—— 面板在反复崩，看 tail -20 /tmp/hphelm-panel.log"; fail=1
+    warn "日志里出现「起来就死 / 关屏兜底」—— 面板在反复崩，看 tail -20 /tmp/hpopi5b-panel.log"; fail=1
 else
     ok "日志无崩溃兜底记录"
 fi
-tail -3 /tmp/hphelm-panel.log 2>/dev/null | sed 's/^/    /'
+tail -3 /tmp/hpopi5b-panel.log 2>/dev/null | sed 's/^/    /'
 
 echo
 if [ "$fail" = 0 ] && [ "$NOTES" = 0 ]; then
@@ -221,5 +221,5 @@ else
     printf '\033[31m部署完成，但上面的判据没全过 —— 先别走开，按 docs/deploy.md 排查或回滚。\033[0m\n'
     exit 1
 fi
-printf '回滚到上一版：sudo install -m755 %s %s && pkill -x hphelm-panel\n' "$PREV" "$INSTALLED"
+printf '回滚到上一版：sudo install -m755 %s %s && pkill -x hpopi5b-panel\n' "$PREV" "$INSTALLED"
 printf '别忘了：改了行为/版式 ⇒ 同步 docs/ + HANDOFF.md + .ai/ ⇒ git commit。\n'

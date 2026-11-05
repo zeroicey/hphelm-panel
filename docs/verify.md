@@ -48,7 +48,7 @@ frame 13 diffpx=   35124 ( 1.69%)  bbox=(52,177)-(1503,584)   ← 1Hz 内容更�
 
 ## 三、判据二：不空转（**改了主循环/渲染必跑**）
 
-**判据**：`HPHELM_PANEL_DEBUG=1` 下每秒应打印
+**判据**：`HPOPI5B_PANEL_DEBUG=1` 下每秒应打印
 
 ```
 主循环 2 it/s · 事件 0 · poll[可读 0/超时 2/其他 0] · 重绘 1 · 采样 1 · 类型:
@@ -111,7 +111,7 @@ magick shot.png -crop WxH+X+Y +repage -depth 8 rgb:- | python3 …
 ## 五、判据四：性能（**每轮报数字**）
 
 ```sh
-P=$(pgrep -x hphelm-panel)
+P=$(pgrep -x hpopi5b-panel)
 read u1 s1 < <(awk '{print $14,$15}' /proc/$P/stat); sleep 20
 read u2 s2 < <(awk '{print $14,$15}' /proc/$P/stat)
 python3 -c "
@@ -137,9 +137,9 @@ print('%.2f%% of one core' % (d*1000.0/hz/20000*100))"
 ```sh
 cat /sys/class/tty/tty0/active     # tty7（不是 tty8！tty8 = greeter 抢了 VT）
 pgrep -cx slick-greeter            # 0
-pgrep -cx hphelm-panel             # 1（多了 ⇒ 单实例锁失效）
-md5sum hphelm-panel /usr/local/bin/hphelm-panel   # 一致 ⇒ 装的是新二进制
-tail -5 /tmp/hphelm-panel.log      # 没有「关屏兜底」「连续 3 次」等兜底痕迹
+pgrep -cx hpopi5b-panel             # 1（多了 ⇒ 单实例锁失效）
+md5sum hpopi5b-panel /usr/local/bin/hpopi5b-panel   # 一致 ⇒ 装的是新二进制
+tail -5 /tmp/hpopi5b-panel.log      # 没有「关屏兜底」「连续 3 次」等兜底痕迹
 ```
 
 ---
@@ -148,12 +148,12 @@ tail -5 /tmp/hphelm-panel.log      # 没有「关屏兜底」「连续 3 次」�
 
 ```sh
 Xvfb :9 -screen 0 1920x1080x24 -ac &
-DISPLAY=:9 ./hphelm-panel --state panel --lock /tmp/xv9.lock
-DISPLAY=:9 import -window $(DISPLAY=:9 xdotool search --name hphelm-panel | tail -1) /tmp/shot.png
+DISPLAY=:9 ./hpopi5b-panel --state panel --lock /tmp/xv9.lock
+DISPLAY=:9 import -window $(DISPLAY=:9 xdotool search --name hpopi5b-panel | tail -1) /tmp/shot.png
 ```
 
 - **必须用 `--lock`** 换个锁路径：默认锁是全机 `/tmp` 的，否则 Xvfb 实例会因「已有实例」直接退出。
-- ⚠️ **杀进程用 `pkill -x hphelm-panel` 会连真机实例一起杀**（同名）——
+- ⚠️ **杀进程用 `pkill -x hpopi5b-panel` 会连真机实例一起杀**（同名）——
   真机上那台是守护循环托管的，杀了会被自动拉起、用户屏幕会闪一下。
   **测试时按 `DISPLAY` 挑 pid**：`grep -l 'DISPLAY=:9' /proc/*/environ` 或直接记住自己起的 pid。
 - `Xvfb` 没有 GPU/picom，**观感类判断要在真机复核**（帧差分、性能、几何三类判据两边都有效）。
@@ -175,15 +175,15 @@ magick shot-panel.png -strip -quality 90 assets/panel.png
 
 ```sh
 # ① 链路通：--dump 会真的拉一帧（12 秒超时）
-./hphelm-panel --dump | grep '^remote host='
+./hpopi5b-panel --dump | grep '^remote host='
 # 期望：remote host=hpcore ncore=16 cpu=… mem=…/… disk=… temp=… dock=15 nproc=… ip=…
 
 # ② 只在面板态跑：回桌面后子进程必须消失
-pid=$(pgrep -x hphelm-panel); ps --ppid $pid -o cmd | grep ssh || echo "（桌面态无 ssh ✅）"
+pid=$(pgrep -x hpopi5b-panel); ps --ppid $pid -o cmd | grep ssh || echo "（桌面态无 ssh ✅）"
 
 # ③ 断线可恢复：杀掉远端探针，列标题应在 5 秒内变「离线 Ns」，60 秒后变红
 ssh -T hpcore 'pkill -f "perl -"'
-sleep 6; DISPLAY=:0 import -window "$(xdotool search --name hphelm-panel|tail -1)" /tmp/off.png
+sleep 6; DISPLAY=:0 import -window "$(xdotool search --name hpopi5b-panel|tail -1)" /tmp/off.png
 python3 tools/render-region.py /tmp/off.png 1150 80 1408 140 4   # 看右上角状态文字
 ```
 
@@ -191,7 +191,7 @@ python3 tools/render-region.py /tmp/off.png 1150 80 1408 140 4   # 看右上角�
 可靠的模拟是**暂停本地 ssh 子进程**：
 
 ```sh
-spid=$(ps --ppid $(pgrep -x hphelm-panel) -o pid= | head -1)
+spid=$(ps --ppid $(pgrep -x hpopi5b-panel) -o pid= | head -1)
 kill -STOP $spid; sleep 7   # 数据停止到达 ⇒ 面板应显示「离线 Ns」
 kill -CONT $spid            # 恢复 ⇒ 应立刻回到「在线」
 ```
@@ -200,7 +200,7 @@ kill -CONT $spid            # 恢复 ⇒ 应立刻回到「在线」
 
 ```sh
 uptime            # ⚠️ load > nproc/2 就别量了，量到的是别人的负载
-pid=$(pgrep -x hphelm-panel)
+pid=$(pgrep -x hpopi5b-panel)
 a=$(awk '{print $14+$15}' /proc/$pid/stat); sleep 20
 b=$(awk '{print $14+$15}' /proc/$pid/stat)
 # CLK_TCK=100 ⇒ 1 jiffie = 10ms
@@ -216,19 +216,19 @@ python3 -c "print(f'{(($b-$a)*10)/20000*100:.2f}% of one core')"
 
 ```sh
 # ── 形态 1：正常连接
-./hphelm-panel --state panel --remote hpcore
+./hpopi5b-panel --state panel --remote hpcore
 # 期望 <5s：# 拉起 ssh（第 1 次尝试） → 已连上（主机 hpcore，16 核，N 个进程）
 
 # ── 形态 2：桌面 ↔ 面板 来回切（**最容易漏的一种**）
-pid=$(pgrep -x hphelm-panel)
+pid=$(pgrep -x hpopi5b-panel)
 kill -USR1 $pid; sleep 3     # 进登录页 ⇒ ssh 子进程应消失
 kill -USR2 $pid; sleep 8     # 回面板 ⇒ 应重新拉起并「已恢复」
 # 判据：不得出现「无数据 ⇒ 掐掉重连」紧跟在同一秒（那是我踩过的「拉起→秒杀」死循环）
-grep -c "无数据 ⇒ 掐掉" /tmp/hphelm-panel.log   # 期望 0
+grep -c "无数据 ⇒ 掐掉" /tmp/hpopi5b-panel.log   # 期望 0
 
 # ── 形态 3：连上了但永远没数据（对方探针没起来）
 mkdir -p /tmp/fakebin && printf '#!/bin/sh\nsleep 3600\n' > /tmp/fakebin/ssh && chmod +x /tmp/fakebin/ssh
-PATH=/tmp/fakebin:$PATH ./hphelm-panel --state panel --remote hpcore
+PATH=/tmp/fakebin:$PATH ./hpopi5b-panel --state panel --remote hpcore
 # 期望 20s 内：「连接后 20s 无数据 ⇒ 掐掉重连」→「拉起 ssh（第 2 次尝试）」
 rm -rf /tmp/fakebin
 ```

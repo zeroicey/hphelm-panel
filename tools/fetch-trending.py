@@ -13,7 +13,7 @@
 用法：
     fetch-trending.py OUT.tsv [--since daily|weekly] [--language rust]
 
-部署：systemd 的 hphelm-trending.timer 每 3 小时跑一次；面板只读缓存文件，
+部署：systemd 的 hpopi5b-trending.timer 每 3 小时跑一次；面板只读缓存文件，
 **网络故障与面板渲染互相隔离**（抓不到就保留上一份，面板照常显示）。
 """
 import html
@@ -26,7 +26,7 @@ import unicodedata
 import urllib.request
 
 URL = "https://github.com/trending"
-UA = "hphelm-panel trending fetcher (https://github.com/zeroicey/hphelm-panel)"
+UA = "hpopi5b-panel trending fetcher (https://github.com/zeroicey/hpopi5b-panel)"
 
 BLOCK = re.compile(r'<article class="Box-row">(.*?)</article>', re.S)
 HREF = re.compile(r'<h2[^>]*>.*?href="/([^"/]+/[^"/]+)"', re.S)

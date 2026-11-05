@@ -80,7 +80,7 @@ double fixed = ... + L_H_LINE_H + L_H_BAR_H + L_H_BAR_GAP   /* 注释写的是�
 并加一个开关把算出来的结果打出来：
 
 ```sh
-LAYOUT_DEBUG=1 ./hphelm-panel --state panel 2>&1 | grep HOST
+LAYOUT_DEBUG=1 ./hpopi5b-panel --state panel 2>&1 | grep HOST
 # HOST 18: ch=87.4 脚注y=693.7 底线=711.7 余=0.0    ← 余必须是 0.0；负数＝已经超出屏幕
 ```
 

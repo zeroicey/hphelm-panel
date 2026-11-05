@@ -43,7 +43,7 @@
 ### 6. 两个实例会互相抢抬窗
 
 屏幕变成两张界面互盖，而**日志一切正常**。
-**正解**：`flock /tmp/hphelm-panel.lock` 单实例锁（`--lock` 可换路径）；包装器遇 `rc=3` 要 `sleep 30`。
+**正解**：`flock /tmp/hpopi5b-panel.lock` 单实例锁（`--lock` 可换路径）；包装器遇 `rc=3` 要 `sleep 30`。
 
 ### 7. `const double w[3] = {a, b, 0}` 会静默产生「零宽度栏」
 
@@ -92,7 +92,7 @@
 `login → system-local-login → system-auth` 带 `pam_faillock`；而 `lightdm-autologin` 第一行也是
 `pam_faillock.so preauth` ⇒ 锁屏上输错 3 次把账号锁上 ⇒ **连坐 autologin 失败** ⇒
 lightdm 退回 greeter 并把 VT 切到 tty8 ⇒ 自研面板被藏在后面（用户看到旧登录页）。
-**正解**：专用 `/etc/pam.d/hphelm-auth`（只留 `pam_unix`）；防爆破由面板自己做指数退避。
+**正解**：专用 `/etc/pam.d/hpopi5b-auth`（只留 `pam_unix`）；防爆破由面板自己做指数退避。
 **判据**：`tty0/active` = 会话那个 VT + `pgrep -c slick-greeter` = 0。
 
 ### 14. 守护/兜底逻辑的三个自伤（**一天内让用户两次看到不该出现的旧登录页**）
@@ -113,7 +113,7 @@ lightdm 退回 greeter 并把 VT 切到 tty8 ⇒ 自研面板被藏在后面（�
 
 > **来源**：v1（`feat: hphelm 运维面板首版` 那条血缘）的 `tools/hphelm-lockd`（Python 空闲锁屏守护）。
 > v2 把锁屏收进面板自己（`--lock` + 自研 PAM），那份 Python 实现已废；但下面三条**实测结论**与实现无关，删掉就会重踩。
-> 归档于 2026-10-19 删除 `hphelm-panel-legacy-20261018` 之前（取「抢救知识再删」口径）。
+> 归档于 2026-10-19 删除 `hpopi5b-panel-legacy-20261018` 之前（取「抢救知识再删」口径）。
 
 **① `light-locker` 与 lightdm 是「两把锁」**：lightdm 解锁时会自己 `Unlock`（日志 `Unlocking login1 session`），
 但 light-locker 的状态没被同步 ⇒ 它立刻又要求上锁 ⇒ **用户必须登录两遍**。实测证据链：
@@ -129,7 +129,7 @@ lightdm 退回 greeter 并把 VT 切到 tty8 ⇒ 自研面板被藏在后面（�
 
 **③ 座位已锁时再发一次锁请求 ⇒ lightdm 会再新建一个 greeter X 服务器**（实测 VT 8→9→10 累积，**状态泄漏**）。
 
-**正解**：锁屏**完全由面板自己负责**（`hphelm-panel --lock`），**绝不把控制权交给 DM** ——
+**正解**：锁屏**完全由面板自己负责**（`hpopi5b-panel --lock`），**绝不把控制权交给 DM** ——
 这同时是第 13、14 条的同一条结论。若要自写空闲守护，必须①按**时间**判空闲（解锁后 idle 立刻归零 ⇒
 不会刚解锁又锁）②发锁前先判「是否已锁」，已锁就跳过。
 
@@ -147,7 +147,7 @@ lightdm 退回 greeter 并把 VT 切到 tty8 ⇒ 自研面板被藏在后面（�
 （本轮之前默认值是 3600，所以没人踩到；2026-10-19 把默认改成「永不关屏」时才必须同时改判据。）
 
 **正解**：`if (CFG_SLEEP_OFF > 0 && idle >= CFG_SLEEP_OFF && !screen_off)`，即 **0 或负数 = 永不关屏**。
-**判据**：`hphelm-panel --dump`（或启动日志首行）打印 `sleep_off=off（永不关屏）`；
+**判据**：`hpopi5b-panel --dump`（或启动日志首行）打印 `sleep_off=off（永不关屏）`；
 再 `--sleep-off 1 --state panel` 在 Xvfb 里跑 ⇒ 日志应出现 `面板空闲 Ns ⇒ 关屏（DPMS）`
 （证明正数路径仍可用）；而 `--sleep-off 0` 跑 10 秒日志里**不得**出现该行。
 
@@ -225,7 +225,7 @@ if (base > 0 && now - base > limit) { /* 掐掉 + 退避重连 */ }
 
 ```sh
 mkdir -p /tmp/fakebin && printf '#!/bin/sh\nsleep 3600\n' > /tmp/fakebin/ssh && chmod +x /tmp/fakebin/ssh
-PATH=/tmp/fakebin:$PATH ./hphelm-panel --state panel --remote hpcore
+PATH=/tmp/fakebin:$PATH ./hpopi5b-panel --state panel --remote hpcore
 # 期望 20 秒内看到：连接后 20s 无数据 ⇒ 掐掉重连 → 拉起 ssh（第 2 次尝试）
 ```
 
@@ -244,4 +244,4 @@ PATH=/tmp/fakebin:$PATH ./hphelm-panel --state panel --remote hpcore
 [16:25:06] 远程 hpcore: 拉起 ssh（第 1 次尝试）
 ```
 
-**判据**：`pkill -x hphelm-panel` 后 `tail /tmp/hphelm-panel.log` 必须能看到上面这两种行。
+**判据**：`pkill -x hpopi5b-panel` 后 `tail /tmp/hpopi5b-panel.log` 必须能看到上面这两种行。

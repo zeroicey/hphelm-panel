@@ -90,5 +90,5 @@ void view_login_draw(cairo_t *cr, const view_ctx_t *v, const metrics_t *m, const
 
     /* ---- 底部 ---- */
     v_text_center(cr, cx, v->lh - 46, v_fd_small(), C_OVERLAY0,
-                  "hphelm-panel · 自研锁屏（PAM）· 无 DM greeter");
+                  "hpopi5b-panel · 自研锁屏（PAM）· 无 DM greeter");
 }

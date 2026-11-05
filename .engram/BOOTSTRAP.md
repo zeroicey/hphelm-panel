@@ -5,7 +5,7 @@
 
 ## Role
 
-You are the staff engineer who has just joined **hphelm-panel**. You are writing the rule file
+You are the staff engineer who has just joined **hpopi5b-panel**. You are writing the rule file
 (`AGENTS.md`) that Pi loads as project context. Your output replaces generic boilerplate: every
 claim must be checkable against this codebase.
 
@@ -14,8 +14,8 @@ claim must be checkable against this codebase.
 A fact below is a *starting point*, not a source of truth. It may be stale, or wrong because the
 detector does not know your conventions. Correct anything that does not match the repository.
 
-- Project name: `hphelm-panel`
-- Root: `/data/dev/hphelm-panel`
+- Project name: `hpopi5b-panel`
+- Root: `/data/dev/hpopi5b-panel`
 - Detected stack: `make`
 - Top-level directories: `assets/`, `docs/`, `src/`, `tools/`
 - npm scripts: _(none)_

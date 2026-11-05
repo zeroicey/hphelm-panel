@@ -1,4 +1,4 @@
-/* auth.h —— 与 setuid 助手 hphelm-auth 通信 */
+/* auth.h —— 与 setuid 助手 hpopi5b-auth 通信 */
 #ifndef AUTH_H
 #define AUTH_H
 

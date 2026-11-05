@@ -16,10 +16,10 @@
 ```sh
 # ① 隔离环境里跑（绝不动真屏）
 Xvfb :9 -screen 0 1920x1080x24 -ac &
-DISPLAY=:9 ./hphelm-panel --state panel --lock /tmp/xv9.lock &
+DISPLAY=:9 ./hpopi5b-panel --state panel --lock /tmp/xv9.lock &
 
 # ② 抓图
-DISPLAY=:9 import -window "$(DISPLAY=:9 xdotool search --name hphelm-panel | tail -1)" /tmp/p.png
+DISPLAY=:9 import -window "$(DISPLAY=:9 xdotool search --name hpopi5b-panel | tail -1)" /tmp/p.png
 
 # ③ 三个探针，按「粗 → 细 → 数值」
 python3 tools/render-ascii.py /tmp/p.png 22 22            # 版式对不对（亮度字符 + C = 彩色）
@@ -27,7 +27,7 @@ python3 tools/render-region.py /tmp/p.png 700 560 1230 780 4   # 局部长什么
 python3 tools/measure.py /tmp/p.png --runs 240 --bands     # 几何：色块游程 / 墨迹带 / 颜色 bbox
 
 # ④ 静止性 / 空转（这次改的是主循环或渲染时必跑）
-DISPLAY=:9 HPHELM_PANEL_DEBUG=1 ./hphelm-panel --state panel --lock /tmp/xv9b.lock
+DISPLAY=:9 HPOPI5B_PANEL_DEBUG=1 ./hpopi5b-panel --state panel --lock /tmp/xv9b.lock
 
 # ⑤ 收拾隔离实例：按 pid 杀，绝不用 pkill -x（会连真机实例一起杀）
 ```
@@ -41,4 +41,4 @@ DISPLAY=:9 HPHELM_PANEL_DEBUG=1 ./hphelm-panel --state panel --lock /tmp/xv9b.lo
 ## Rollback
 
 隔离环境里的东西不落地 ⇒ 直接 `kill <pid>` + `pkill Xvfb` 即可，真屏不受影响。
-**唯一的危险动作是误杀真机实例**（同名进程）：用 `pgrep -ax hphelm-panel` 看 `DISPLAY`/参数，按 pid 杀。
+**唯一的危险动作是误杀真机实例**（同名进程）：用 `pgrep -ax hpopi5b-panel` 看 `DISPLAY`/参数，按 pid 杀。

@@ -1,7 +1,7 @@
 #!/usr/bin/perl
 # probe-remote.pl —— 远程指标探针（**在被测机**上跑，只读 /proc 与 /sys）
 #
-# 它不需要被安装：hphelm-panel 把这份脚本从 stdin 喂给 ssh，远端只是 `perl -`。
+# 它不需要被安装：hpopi5b-panel 把这份脚本从 stdin 喂给 ssh，远端只是 `perl -`。
 # 手动调试：
 #   ssh -T -o BatchMode=yes hpcore 'perl -' < tools/probe-remote.pl
 #

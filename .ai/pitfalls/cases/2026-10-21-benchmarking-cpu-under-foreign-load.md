@@ -39,14 +39,14 @@ load average 冲到 23。面板的 CPU 时间片被挤、cairo/pango 的缓存�
 1. **量 CPU 必须同时记录 load average**，并把窗口拉到 ≥20 秒：
    ```sh
    uptime                       # load > nproc/2 就别量了
-   pid=$(pgrep -x hphelm-panel)
+   pid=$(pgrep -x hpopi5b-panel)
    a=$(awk '{print $14+$15}' /proc/$pid/stat); sleep 20
    b=$(awk '{print $14+$15}' /proc/$pid/stat)
    # jiffies × 10ms / 窗口 ms × 100
    ```
 2. **A/B 对照要做「同一窗口内交替」**，不能串行跑两轮 —— 串行的两轮之间负载会漂移。
    正确形状：`A(10s) B(10s) A(10s) B(10s)`，取各自的中位数。
-3. **先看 `HPHELM_PANEL_DEBUG=1` 的单帧耗时**再谈优化。本轮真实的数字是
+3. **先看 `HPOPI5B_PANEL_DEBUG=1` 的单帧耗时**再谈优化。本轮真实的数字是
    「签名 0.1ms / 绘制 5~10ms / 上屏 0.0~0.1ms」—— 单帧 × 1 Hz 就解释了全部 CPU，
    于是优化方向（pango 整形次数、整屏渐变填充）是明确的，不用猜。
 

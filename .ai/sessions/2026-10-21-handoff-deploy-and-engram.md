@@ -12,7 +12,7 @@
 ## 做了什么
 
 1. **`tools/deploy.sh` 重写为本机原地七阶段部署**。旧版在本机必失败（`ssh hphelm` 无 Host 别名）。
-   新增 `--check` / `--no-restart`；安装前自动留 `/usr/local/bin/hphelm-panel.prev`。
+   新增 `--check` / `--no-restart`；安装前自动留 `/usr/local/bin/hpopi5b-panel.prev`。
 2. **`docs/deploy.md` 重写成「更新系统屏保」runbook**：屏保到底是什么 / 文件清单 / 开发循环 /
    七阶段 / 判据表 / 三层回滚 / 六件绝不能做的事 / 交付清单 / 历史说明。
 3. **`.ai/` 记忆库**（engram v0.5.0，本地构建）：`init --notes "…"` 生成，然后填了
@@ -24,7 +24,7 @@
 ## 判据（三次真跑，都在这台机上）
 
 ```
-VT=tty7 · slick-greeter=0 · hphelm-panel=1
+VT=tty7 · slick-greeter=0 · hpopi5b-panel=1
 源码⇄已装 逐字节一致 · 助手 4755 root:root · sleep_off=off（永不关屏）
 帧差分 >30% 变化帧 = 0 · 日志无当前实例的崩溃兜底
 CPU = 1.13% / 1.60% of one core（20s 窗口，含/不含热身）
@@ -32,7 +32,7 @@ CPU = 1.13% / 1.60% of one core（20s 窗口，含/不含热身）
 
 ## 没解决的
 
-1. **CPU 1.1~1.6%，文档记录是 0.60%** —— 机理未定。下一步用 `HPHELM_PANEL_DEBUG=1` 分「重绘次数」与「单帧耗时」。
+1. **CPU 1.1~1.6%，文档记录是 0.60%** —— 机理未定。下一步用 `HPOPI5B_PANEL_DEBUG=1` 分「重绘次数」与「单帧耗时」。
 2. **推不上 GitHub**：hphelm 的 `id_ed25519` 是 `dotfiles` 的 deploy key（一仓一把），
    `git push origin main` 权限失败 ⇒ 本轮只提交到本地。解法二选一：给本仓加 write deploy key，
    或换有账号级密钥的机器推（hphelm 无 `gh` 登录）。

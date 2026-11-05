@@ -28,7 +28,7 @@ typedef struct {
 
 static tr_row_t rows[TR_MAX];
 static int nrows;
-static char cache_path[256] = "/var/cache/hphelm-panel/trending.tsv";
+static char cache_path[256] = "/var/cache/hpopi5b-panel/trending.tsv";
 static struct stat lst;
 static int loaded;
 
@@ -131,7 +131,7 @@ static void draw(cairo_t *cr, const view_ctx_t *v, const scene_env_t *e) {
     if (nrows == 0) {
         v_text_center(cr, v->lw / 2, v->lh / 2 - 24, v_fd_big(), C_OVERLAY0, "GitHub 趋势还没同步");
         v_text_center(cr, v->lw / 2, v->lh / 2 + 12, v_fd_label(), C_OVERLAY0,
-                      "systemctl start hphelm-trending.service");
+                      "systemctl start hpopi5b-trending.service");
         v_text_center(cr, v->lw / 2, v->lh / 2 + 34, v_fd_small(), C_OVERLAY0, "%s", cache_path);
         return;
     }

@@ -26,7 +26,7 @@ TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 
 cat >"$TMP/probe.c" <<'EOF'
-/* 抓 hphelm-panel 窗口连续帧，报告相邻帧差异（有没有「半成品帧」） */
+/* 抓 hpopi5b-panel 窗口连续帧，报告相邻帧差异（有没有「半成品帧」） */
 #define _GNU_SOURCE
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
@@ -54,12 +54,12 @@ int main(int argc, char **argv) {
     for (unsigned i = 0; i < nc; i++) {
         char *nm = 0;
         if (XFetchName(d, ch[i], &nm) && nm) {
-            if (!strcmp(nm, "hphelm-panel")) w = ch[i];
+            if (!strcmp(nm, "hpopi5b-panel")) w = ch[i];
             XFree(nm);
         }
     }
     if (ch) XFree(ch);
-    if (!w) { fprintf(stderr, "hphelm-panel window not found\n"); return 1; }
+    if (!w) { fprintf(stderr, "hpopi5b-panel window not found\n"); return 1; }
     XWindowAttributes a;
     XGetWindowAttributes(d, w, &a);
     int W = a.width, H = a.height;

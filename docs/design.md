@@ -115,7 +115,7 @@
 判据是 `LAYOUT_DEBUG=1` 的这行输出：
 
 ```sh
-LAYOUT_DEBUG=1 ./hphelm-panel --state panel 2>&1 | grep HOST
+LAYOUT_DEBUG=1 ./hpopi5b-panel --state panel 2>&1 | grep HOST
 # HOST 18: ch=87.4 脚注y=693.7 底线=711.7 余=0.0
 #                                              ↑ 必须是 0（负数 = 已经超出屏幕底部）
 ```
@@ -208,7 +208,7 @@ double v_nice_ceil(double v);                                 // 量程吸附 1/
 ## 六·五、性能：一帧 5~10ms 花在哪（2026-10-21 实测）
 
 面板 1 Hz 重绘，**单帧绘制时间 × 1 Hz ≈ CPU 占用**（这台机上 10ms/帧 ≈ 1% of one core）。
-所以改 UI 时顺手看一眼 `HPHELM_PANEL_DEBUG=1` 的「绘制 Xms」。三个已知大头：
+所以改 UI 时顺手看一眼 `HPOPI5B_PANEL_DEBUG=1` 的「绘制 Xms」。三个已知大头：
 
 | 大头 | 现象 | 已做的处理 |
 | --- | --- | --- |

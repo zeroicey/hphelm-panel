@@ -51,7 +51,7 @@ if (base > 0 && now - base > limit) { /* 掐掉 + 退避重连 */ }
 ```sh
 mkdir -p /tmp/fakebin
 printf '#!/bin/sh\nsleep 3600\n' > /tmp/fakebin/ssh && chmod +x /tmp/fakebin/ssh
-PATH=/tmp/fakebin:$PATH ./hphelm-panel --state panel --remote hpcore
+PATH=/tmp/fakebin:$PATH ./hpopi5b-panel --state panel --remote hpcore
 # 期望 20 秒内：
 #   连接后 20s 无数据 ⇒ 掐掉重连
 #   拉起 ssh（第 2 次尝试）

@@ -1,11 +1,11 @@
-/* hphelm-auth.c —— setuid root 的 PAM 认证助手（**唯一的特权代码**）
+/* hpopi5b-auth.c —— setuid root 的 PAM 认证助手（**唯一的特权代码**）
  *
  * 只做一件事：从 stdin 读一行密码，用 PAM 的 `login` 栈验证指定用户，往 stdout 打 OK/FAIL。
  * 任何“顺带”的能力都不要加（不开 shell、不执行命令、不写文件）。
  *
  * 构建（必须 setuid root）：
- *   gcc -O2 -Wall -o hphelm-auth hphelm-auth.c -lpam -lpam_misc
- *   sudo install -m 4755 -o root -g root hphelm-auth /usr/local/libexec/hphelm-auth
+ *   gcc -O2 -Wall -o hpopi5b-auth hpopi5b-auth.c -lpam -lpam_misc
+ *   sudo install -m 4755 -o root -g root hpopi5b-auth /usr/local/libexec/hpopi5b-auth
  *
  * 安全要点：
  *   - 密码**只走 stdin**，绝不进 argv / env（否则 `ps` / `tr '\0' '\n' < /proc/pid/environ` 能看到）
@@ -54,7 +54,7 @@ static int conv(int n, const struct pam_message **msg, struct pam_response **res
 
 int main(int argc, char **argv) {
     if (argc != 2) {
-        puts("FAIL usage: hphelm-auth <user>");
+        puts("FAIL usage: hpopi5b-auth <user>");
         return 2;
     }
     const char *want = argv[1];
@@ -82,7 +82,7 @@ int main(int argc, char **argv) {
     struct pam_conv pc = {.conv = conv, .appdata_ptr = &ctx};
     pam_handle_t *pamh = NULL;
 
-    int rc = pam_start("hphelm-auth", want, &pc, &pamh);
+    int rc = pam_start("hpopi5b-auth", want, &pc, &pamh);
     if (rc != PAM_SUCCESS) {
         printf("FAIL pam_start: %s\n", pam_strerror(pamh, rc));
         explicit_bzero(pw, sizeof pw);

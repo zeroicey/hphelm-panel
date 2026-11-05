@@ -1,7 +1,7 @@
 /* remote.c —— 生产服务器指标采集（ssh 长连接 + 远端 perl 探针）
  *
  * 链路：
- *   hphelm-panel ──fork/exec──▶ ssh -T <target> 'perl -'  ──▶ 被监控机的 perl
+ *   hpopi5b-panel ──fork/exec──▶ ssh -T <target> 'perl -'  ──▶ 被监控机的 perl
  *        ▲                         stdin = tools/probe-remote.pl（本地文件）
  *        └──── 非阻塞读 stdout ──── 1 Hz 的 S/C/P/E 行（见 remote.h）
  *
@@ -48,8 +48,8 @@ static void rlog(const remote_t *r, const char *fmt, ...) {
 }
 
 /* 探针脚本找法：先环境变量，再安装路径，最后开发目录（按顺序命中即止） */
-static const char *PROBE_ENV = "HPHELM_PROBE";
-static const char *PROBE_INSTALLED = "/usr/local/share/hphelm-panel/probe-remote.pl";
+static const char *PROBE_ENV = "HPOPI5B_PROBE";
+static const char *PROBE_INSTALLED = "/usr/local/share/hpopi5b-panel/probe-remote.pl";
 
 static int probe_open(const char *argv0) {
     const char *cand[8];
@@ -158,7 +158,7 @@ void remote_start(remote_t *r, double now) {
 
     int script = probe_open(NULL);
     if (script < 0) {
-        rlog(r, "找不到 tools/probe-remote.pl（可用 $HPHELM_PROBE 指定）");
+        rlog(r, "找不到 tools/probe-remote.pl（可用 $HPOPI5B_PROBE 指定）");
         r->failures++;
         r->next_start = now + 60.0;
         return;

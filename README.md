@@ -1,11 +1,17 @@
-# hphelm-panel
+# hpopi5b-panel
 
-> **English TL;DR** — A hand-drawn (no GUI toolkit) X11 **ops dashboard + lock screen** for exactly
-> one machine in my home fleet (`hphelm`): ~2.3k lines of C over cairo + pango, **~1% of one core**,
-> ~5 MiB private memory, 2 threads, zero GUI toolkit dependencies. The dashboard shows **two hosts
-> side by side** (this workstation + one production server pulled over a single long-lived ssh pipe,
-> nothing installed on the remote side). Idle → resource panel; any input → login page; PAM auth →
-> desktop; idle again → panel.
+> **现役形态（2026-11-03 起；2026-11-05 改名 `hphelm-panel` → `hpopi5b-panel`）**：跑在
+> **hpopi5b（Orange Pi 5 + DP 显示器 1920×1080）**上的**纯显示终端** —— `--kiosk`，无登录页、
+> 无桌面、不接键鼠；两幕（`panel` 运维看板 / `trending` GitHub 趋势）按 `--rotate` 轮换。
+> 源码工作副本在 **hpcmd `/data/dev/project/hpopi5b-panel`**，部署见 [`docs/deploy.md`](docs/deploy.md)。
+> **历史形态（已随 `hphelm` 2026-10-27 重装而消失）**：下文「锁屏 / 登录页 / PAM 认证」描述的是
+> 工位机 `hphelm` 上的看板+自研锁屏；认证助手仍保留源码（`src/hpopi5b-auth.c`），但**生产不安装**。
+>
+> **English TL;DR** — A hand-drawn (no GUI toolkit) X11 **ops dashboard kiosk** for one display
+> terminal in my home fleet (`hpopi5b`, Orange Pi 5): ~3.0k lines of C over cairo + pango,
+> **~4.6% of one core**, ~18 MiB RSS, 1 thread, zero GUI toolkit dependencies. Two hosts side by side
+> (commander seat + production, pulled over a long-lived ssh pipe, nothing installed on the remote).
+> Auto-rotating scenes (`panel` / `trending`); no login page in production.
 > ⚠️ **This is not a drop-in product.** It is *my* answer for *my* machine, wired into our fleet's
 > desktop stack and operational rules. Read [「这不是给谁用的」](#这不是给谁用的我为什么这么写)
 > before copying anything.
@@ -49,7 +55,7 @@ PANEL ──idle≥sleep_off──▶ DPMS 关屏；任意输入唤醒
 ### 生产服务器监控（`--remote`）
 
 ```
-hphelm-panel ──fork/exec──▶ ssh -T hpcore 'perl -'  ──▶ 被监控机的 perl（脚本从 stdin 喂进去）
+hpopi5b-panel ──fork/exec──▶ ssh -T hpcore 'perl -'  ──▶ 被监控机的 perl（脚本从 stdin 喂进去）
      ▲                          stdin = tools/probe-remote.pl（本地文件，不落盘到对方）
      └──── 非阻塞读 stdout ───── 1 Hz 的 S/C/P/E 行
 ```
@@ -64,7 +70,7 @@ hphelm-panel ──fork/exec──▶ ssh -T hpcore 'perl -'  ──▶ 被监�
 | **退避重连** | 2→4→8→16→30 秒封顶；断线时列标题旁显示「离线 Ns」，主循环照常跑 |
 
 实测成本：远端 `perl` **~0.3% of one core**，本机 `ssh` 进程 <0.1%。
-配置写在 `/etc/hphelm-panel.conf`（`remote=hpcore`），优先级 `--remote` > `$HPHELM_REMOTE` > 该文件。
+配置写在 `/etc/hpopi5b-panel.conf`（`remote=hpcore`），优先级 `--remote` > `$HPOPI5B_REMOTE` > 该文件。
 **没配就没有右列**（面板会写「未配置」，不拿本机数据冒充）。
 
 ## 为什么是「自己画」——这是实测选出来的，不是偏好
@@ -104,7 +110,7 @@ CPU 在加第二台主机后从 **0.60% → 约 1.0%（只本机）/ 约 1.4%（
 | --- | --- | --- |
 | **屏幕** | 1920×1080 / 141.8 DPI ⇒ `SCALE=1.48`，版式常量按 **1297×729 逻辑像素**调的 | 改 `--scale` 或 `src/theme.h` 的 `L_*` 常量；换分辨率要重新调版式 |
 | **桌面栈** | lightdm(autologin) + bspwm + polybar + picom；面板是 `override-redirect` 全屏覆盖层 | 没有 autologin 的机器上「回桌面」这一步不成立；堆叠/抬窗逻辑要重验 |
-| **认证** | 需要**专用 PAM 服务** `/etc/pam.d/hphelm-auth`（只留 `pam_unix`）；setuid 助手装到 `/usr/local/libexec/` | ⛔ **绝不要复用 `login` 栈**（带 `pam_faillock` ⇒ 会把 autologin 一起锁死，我们实测踩过）；换发行版要自己写这份 PAM 配置 |
+| **认证** | 需要**专用 PAM 服务** `/etc/pam.d/hpopi5b-auth`（只留 `pam_unix`）；setuid 助手装到 `/usr/local/libexec/` | ⛔ **绝不要复用 `login` 栈**（带 `pam_faillock` ⇒ 会把 autologin 一起锁死，我们实测踩过）；换发行版要自己写这份 PAM 配置 |
 | **会话入口** | `/usr/local/bin/hphelm-session` 里起面板 + 守护循环 + 日志轮转 | 得自己接进你的 DM/会话 |
 | **运维红线** | 「永不向 lightdm 发锁请求」「守护循环只把运行 <5 秒当失败」「回滚先停 VT 守卫」 | 这三条是我们机队用**血的教训**换来的（见 `docs/pitfalls.md`），直接抄代码但不知道这三条会踩同一个坑 |
 | **字体** | JetBrainsMono Nerd Font（图标 + 中文回退靠 fontconfig） | 换字体要重验宽度，版式是拿它量的 |
@@ -117,12 +123,12 @@ CPU 在加第二台主机后从 **0.60% → 约 1.0%（只本机）/ 约 1.4%（
 
 ```sh
 make                 # 需要 pkg-config: x11 x11-xcb xscrnsaver cairo cairo-xlib pangocairo
-sudo make install    # → /usr/local/bin/hphelm-panel
-                     # → /usr/local/libexec/hphelm-auth（4755 root:root，setuid）
+sudo make install    # → /usr/local/bin/hpopi5b-panel
+                     # → /usr/local/libexec/hpopi5b-auth（4755 root:root，setuid）
 ```
 
 ⚠️ **构建必须在目标机 `hphelm` 上做**（需要 X 开发头文件；无头机器上 `make` 会失败）。
-**2026-10-19 起源码目录与部署目录是同一个**：`/data/dev/hphelm-panel`，所以现在没有 rsync ——
+**2026-10-19 起源码目录与部署目录是同一个**：`/data/dev/hpopi5b-panel`，所以现在没有 rsync ——
 `tools/deploy.sh` 就在本机构建、安装、重启、跑判据。
 
 部署到 `hphelm` 的完整流程（含红线守卫、三层回滚、六件绝不能做的事）见 **[`docs/deploy.md`](docs/deploy.md)**；
@@ -131,25 +137,25 @@ sudo make install    # → /usr/local/bin/hphelm-panel
 常用参数：
 
 ```sh
-hphelm-panel --panel-idle 180     # 桌面空闲多久进面板（秒）
-hphelm-panel --login-back 120     # 登录页空闲多久回面板（秒）
-hphelm-panel --input-grace 1.2    # 进面板后多久才接受唤醒（防误触）
-hphelm-panel --sleep-off 0       # 面板空闲多久关屏（DPMS）；**0 或负数 = 永不关屏（默认）**
-hphelm-panel --scale 1.48         # 缩放（物理/逻辑像素比）
-hphelm-panel --remote hpcore      # 生产服务器（ssh 目标）；空 = 只显示本机
-hphelm-panel --lock /tmp/x.lock   # 单实例锁路径（默认 /tmp/hphelm-panel.lock）
-hphelm-panel --state panel|login  # 强制初始状态（验证界面用）
-hphelm-panel --kiosk             # 纯显示器：永不进登录页/桌面（Pi 看板用）
-hphelm-panel --remote2 hpcore    # 第二台真机：替换 kiosk 下左列的「本机」
-hphelm-panel --scene panel|trending  # 钉住一幕（不轮换）
-hphelm-panel --rotate 30         # 幕轮换间隔（秒）；0 = 不轮换（kiosk 默认 30，桌面默认 0）
-hphelm-panel --transition dip|cut  # 转场：dip=淡出淡入（默认）· cut=硬切（验版式用）
-hphelm-panel --theme auto|day|night  # 主题：auto=按时刻自动切（默认）· day/night 钉住
-hphelm-panel --theme-day 07:00   # 白天起点（默认 07:00）
-hphelm-panel --theme-night 19:00 # 夜间起点（默认 19:00）
-hphelm-panel --list-scenes       # 列出可用幕后退出（不需要 X）
-hphelm-panel --dump               # 只打采集层数据后退出（不需要 X）
-HPHELM_PANEL_DEBUG=1 …            # 主循环仪表：it/s · poll 结果 · 事件类型 · 各阶段耗时
+hpopi5b-panel --panel-idle 180     # 桌面空闲多久进面板（秒）
+hpopi5b-panel --login-back 120     # 登录页空闲多久回面板（秒）
+hpopi5b-panel --input-grace 1.2    # 进面板后多久才接受唤醒（防误触）
+hpopi5b-panel --sleep-off 0       # 面板空闲多久关屏（DPMS）；**0 或负数 = 永不关屏（默认）**
+hpopi5b-panel --scale 1.48         # 缩放（物理/逻辑像素比）
+hpopi5b-panel --remote hpcore      # 生产服务器（ssh 目标）；空 = 只显示本机
+hpopi5b-panel --lock /tmp/x.lock   # 单实例锁路径（默认 /tmp/hpopi5b-panel.lock）
+hpopi5b-panel --state panel|login  # 强制初始状态（验证界面用）
+hpopi5b-panel --kiosk             # 纯显示器：永不进登录页/桌面（Pi 看板用）
+hpopi5b-panel --remote2 hpcore    # 第二台真机：替换 kiosk 下左列的「本机」
+hpopi5b-panel --scene panel|trending  # 钉住一幕（不轮换）
+hpopi5b-panel --rotate 30         # 幕轮换间隔（秒）；0 = 不轮换（kiosk 默认 30，桌面默认 0）
+hpopi5b-panel --transition dip|cut  # 转场：dip=淡出淡入（默认）· cut=硬切（验版式用）
+hpopi5b-panel --theme auto|day|night  # 主题：auto=按时刻自动切（默认）· day/night 钉住
+hpopi5b-panel --theme-day 07:00   # 白天起点（默认 07:00）
+hpopi5b-panel --theme-night 19:00 # 夜间起点（默认 19:00）
+hpopi5b-panel --list-scenes       # 列出可用幕后退出（不需要 X）
+hpopi5b-panel --dump               # 只打采集层数据后退出（不需要 X）
+HPOPI5B_PANEL_DEBUG=1 …            # 主循环仪表：it/s · poll 结果 · 事件类型 · 各阶段耗时
 ```
 
 ### 多幕（一块屏不只显示一种东西）
@@ -169,11 +175,11 @@ HPHELM_PANEL_DEBUG=1 …            # 主循环仪表：it/s · poll 结果 · �
 
 `trending` 的数据**不是 API**：GitHub 的 trending 只存在于网页里（官方没有接口），
 所以由 `tools/fetch-trending.py` 抓 `github.com/trending?since=daily` 解析成 TSV，存到
-`/var/cache/hphelm-panel/trending.tsv`，面板**只读这个文件**。`hphelm-trending.timer` 每 3 小时跑一次
+`/var/cache/hpopi5b-panel/trending.tsv`，面板**只读这个文件**。`hpopi5b-trending.timer` 每 3 小时跑一次
 （`OnUnitActiveSec=3h`，开机 2 分钟后先跑一次）；抓不到就保留上一份，**网络故障不影响渲染**。
-换榜单：改 `systemd/hphelm-trending.service` 的 `ExecStart` 追加 `--since weekly` 或 `--language rust`。
+换榜单：改 `systemd/hpopi5b-trending.service` 的 `ExecStart` 追加 `--since weekly` 或 `--language rust`。
 
-轮换间隔只有一个数 `--rotate`（或 `/etc/hphelm-panel.conf` 的 `rotate=`）：30 s 的来历是
+轮换间隔只有一个数 `--rotate`（或 `/etc/hpopi5b-panel.conf` 的 `rotate=`）：30 s 的来历是
 「密排面板抬头到看完约 8~12 s，留 2~3 倍余量」；4 幕 × 30 s = 2 分钟一圈，再长值班的人会漏掉
 告警页。真要放很多幕，正确做法是「告警幕常驻 + 其余轮换」，不是把间隔压到 5 s。
 
@@ -204,9 +210,9 @@ src/scenes.c        幕的注册表 + 轮换调度 + 转场推进（纯逻辑）
 src/scene_panel.c   幕「运维面板」（转调 view_panel.c）
 src/scene_trending.c 幕「GitHub 趋势」（只读缓存 TSV，缺文件时给空态）
 tools/fetch-trending.py GitHub Trending 抓取器（无依赖，python3）
-systemd/        hphelm-trending.{service,timer}（每 3 小时同步一次榜单）
+systemd/        hpopi5b-trending.{service,timer}（每 3 小时同步一次榜单）
 src/auth.[ch]       与 setuid 助手通信（密码只走 stdin）
-src/hphelm-auth.c   唯一的特权代码：setuid root，调 PAM 验一次密码
+src/hpopi5b-auth.c   唯一的特权代码：setuid root，调 PAM 验一次密码
 src/panel.c         X11 窗口、事件、状态机、主循环、双缓冲
 tools/              渲染验证（render-ascii/render-region/measure）、帧差分探针、部署脚本、
                     probe-remote.pl（喂给被监控机的只读探针）
@@ -224,7 +230,7 @@ docs/               架构 / 设计 / 验证 / 坑 / 部署
 ## 相关
 
 - 机队视角的运维记录（部署位置、VT 守卫、红线）：`kb` 仓库的 `runbooks/hphelm.md`
-  「运维面板（hphelm-panel）」节（kb 主副本在 `hphelm:/data/kb`）。**那是机队事实的权威来源**，
+  「运维面板（hpopi5b-panel）」节（kb 主副本在 `hphelm:/data/kb`）。**那是机队事实的权威来源**，
   本项目文档负责代码与设计。
 - 项目记忆库：`.ai/`（`engram dump` 出 ≤1.5 KB 会话指纹；`engram doctor` 查漂移）。
 

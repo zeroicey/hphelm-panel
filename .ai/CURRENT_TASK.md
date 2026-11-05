@@ -2,7 +2,17 @@
 
 <!-- The single live surface. Keep it under ~60 lines: it is read on every session start. -->
 
-**Status:** 🟡 active · **Updated:** 2026-11-05（第九轮：多幕）
+**Status:** 🟡 active · **Updated:** 2026-11-05（第十轮：改名 + 归位 `project/`）
+
+## 第十轮：改名与落点（2026-11-05）
+
+- 用户裁决：项目 `hphelm-panel` → **`hpopi5b-panel`**，并归位到 **`/data/dev/project/`**（顶层只留分类目录）。
+- **改名范围**：项目目录 / GitHub 仓库 / 二进制 / 安装路径 / 配置 / 日志 / 锁 / systemd 单元；
+  纯历史 `hphelm`（旧工位机）称谓与已废弃的 `hphelm-session`/`hphelm-vt-guard` 保持原样，不改写成假历史。
+- **生产端已同步**（hpopi5b）：`/usr/local/lib/hpopi5b-panel/` · `/usr/local/bin/hpopi5b-kiosk` ·
+  `/usr/local/share/hpopi5b-panel/probe-remote.pl` · `/etc/hpopi5b-panel.conf` · `/var/log/hpopi5b-panel.log` ·
+  `/var/cache/hpopi5b-panel/` · 单元 `hpopi5b-kiosk.service` + `hpopi5b-trending.{service,timer}`。
+- **推送通路已恢复**（hpcmd 的 `gh auth` 可用，HTTPS push 成功）；旧的「本机推送失败、先不管」作废。
 
 ## Goal
 
@@ -17,7 +27,7 @@
 - [x] `panel.c` 接幕（render/签名/poll 30 ms/懒分配 altpix/HUD）
 - [x] `--scene --rotate --transition --list-scenes` + 配置文件键
 - [x] `v_text_h()`：版式不再拿字号猜行高
-- [x] `trending` 幕 + `tools/fetch-trending.py` + `hphelm-trending.timer`（3h）
+- [x] `trending` 幕 + `tools/fetch-trending.py` + `hpopi5b-trending.timer`（3h）
 - [x] 真机 enabled，列表/涨星/总数/HUD 实拍确认
 - [x] trending 两列 12 条 + 描述 13pt / 仓库名 14pt（`F_DESC`），离屏与真机都看过
 - [x] 撤幕：删除 scene_hero/clock/ambient，`--scene` 只剩 panel|trending
@@ -25,7 +35,7 @@
 - [x] 两幕 × 两主题离屏与真机实拍；自动切换用近时刻实测亮度曲线（237→6→21）
 - [x] 真机构建 + `probe-frames`（>30% 变化帧=0）+ CPU 口径
 - [x] 转场视觉实测（push 中间帧确认；四特效无 X 错误）
-- [ ] 定 `--rotate` 最终值（候选 25/30/45）并写进 `/etc/hphelm-panel.conf`
+- [ ] 定 `--rotate` 最终值（候选 25/30/45）并写进 `/etc/hpopi5b-panel.conf`
 - [ ] `tools/deploy.sh` 支持 hpopi5b 落点（现在指向 hphelm 的 `/usr/local/bin`）
 
 ## Checklist（第七轮）
@@ -33,8 +43,8 @@
 - [x] `src/remote.[ch]`：ssh 长连接 + 非阻塞行解析 + 半帧不提交 + 退避重连
 - [x] `tools/probe-remote.pl`：远端只读探针（从 stdin 喂入，**不在 hpcore 装任何东西**）
 - [x] 三列版式（`theme.h` 绝对逻辑像素 + `draw_host()` 画两台 + 进程榜一列两段）
-- [x] `/etc/hphelm-panel.conf` 的 `remote=`（改主机名不用编辑 root 的会话包装器）
-- [x] `tools/deploy.sh` 安装并校验探针 + `HPHELM_REMOTE=` 时顺带验链路
+- [x] `/etc/hpopi5b-panel.conf` 的 `remote=`（改主机名不用编辑 root 的会话包装器）
+- [x] `tools/deploy.sh` 安装并校验探针 + `HPOPI5B_REMOTE=` 时顺带验链路
 - [x] 性能：右对齐复用排版、背景渐变只渲染一次、等宽字体按字符宽截断
 - [x] 真机判据全绿（tty7 / greeter=0 / panel=1 / 帧差分 0 / 日志无兜底）
 - [x] 版面精细化（圆点对齐墨迹中线 / 每块一行 / 曲线均分剩余高度 / 新增 7 项指标）
@@ -42,13 +52,13 @@
 - [x] 远程采集加**状态变迁日志**（拉起/已连上/EOF/退出/超时重连）
 - [ ] **CPU 仍略超预算**：只本机 ~1.0%、含生产 ~1.4%（预算 <1%）— 见 Blockers
 - [ ] 容器**健康**（重启循环/备份/证书）还没做，现在只有「容器 N 个」
-- [ ] GitHub 推送通路（用户已裁决「先不管」，提交留本地）
+- [x] GitHub 推送通路（2026-11-05 在 hpcmd 上恢复，push 成功）
 
 ## Code state
 
-`main` · 第七轮改动已提交。已装二进制与源码逐字节一致。
-现场：`tty7` · `slick-greeter=0` · `hphelm-panel=1` · `sleep_off=off` · 帧差分 `0` 帧 >30% ·
-面板子进程里有 1 个 `ssh … hpcore perl -`。
+`main` · 第九轮（多幕）已提交并部署到 hpopi5b。
+现场（2026-11-05）：`hpopi5b-kiosk` active · `pgrep -cx hpopi5b-panel` = 1 · `tty1` active ·
+两幕 30s 轮换 · 帧差分 `0` 帧 >30% · 两个远程列各 1 个 `ssh … perl -`。
 
 ## Blockers
 
@@ -73,7 +83,7 @@
 ## Layout invariants（改版面时必看）
 
 - 主机列纵向是**流式**的：`L_H_*` 是各行高/间距，`fixed` 表必须与绘制顺序逐段对应
-- 判据：`LAYOUT_DEBUG=1 ./hphelm-panel --state panel 2>&1 | grep HOST` ⇒ `余=0.0`
+- 判据：`LAYOUT_DEBUG=1 ./hpopi5b-panel --state panel 2>&1 | grep HOST` ⇒ `余=0.0`
 - 圆点用 `v_text_right_ex()` 返回的墨迹中线画，**不要用常数偏移**
 
 ## Next action

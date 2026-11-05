@@ -94,4 +94,4 @@ engram dump            # ≤1.5 KB fingerprint → paste as the first user messa
 engram dump --json     # same content, machine-readable
 ```
 
-Project: **hphelm-panel** · skeleton created 2026-10-21 by engram.
+Project: **hpopi5b-panel** · skeleton created 2026-10-21 by engram.

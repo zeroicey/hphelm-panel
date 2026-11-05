@@ -34,7 +34,7 @@ PANEL ──idle≥sleep_off(0=永不)──▶ DPMS 关屏；任意输入唤醒
 
 **开机必须 `--state panel`**：开机 idle=0，若从 DESKTOP 起步就会直接暴露桌面、丢掉「要密码」。
 
-**单实例锁**：`flock /tmp/hphelm-panel.lock`（`--lock PATH` 可改）；已有实例则 `exit 3`，
+**单实例锁**：`flock /tmp/hpopi5b-panel.lock`（`--lock PATH` 可改）；已有实例则 `exit 3`，
 会话包装器见到 `rc=3` 会 `sleep 30` 避免空转。
 （两个实例会互相抢抬窗 ⇒ 屏幕变成两张界面互盖，而日志一切正常 —— 踩过。）
 
@@ -90,7 +90,7 @@ PANEL ──idle≥sleep_off(0=永不)──▶ DPMS 关屏；任意输入唤醒
 ## 二·五、生产服务器采集（`src/remote.[ch]` + `tools/probe-remote.pl`）
 
 ```
-hphelm-panel ──fork/exec──▶ ssh -T <target> 'perl -'   ──▶ 被监控机的 perl
+hpopi5b-panel ──fork/exec──▶ ssh -T <target> 'perl -'   ──▶ 被监控机的 perl
      ▲                         stdin = tools/probe-remote.pl（本地文件）
      └─── 非阻塞 read(stdout) ── 1 Hz 的 S/C/P/E 行
 ```
@@ -124,7 +124,7 @@ hphelm-panel ──fork/exec──▶ ssh -T <target> 'perl -'   ──▶ 被�
   面板永远显示「离线」——2026-10-21 真机就这么卡了一次。现在：
   从未收到帧 ⇒ 连接存活 20 秒即视为失败；收到过帧 ⇒ 30 秒无新帧视为失败。
 - 探针脚本用 `ssh 'perl -' < script` 喂进去，**不落盘到对方机器**；
-  本程序找脚本的顺序是 `$HPHELM_PROBE` → `/usr/local/share/hphelm-panel/probe-remote.pl` → 开发目录。
+  本程序找脚本的顺序是 `$HPOPI5B_PROBE` → `/usr/local/share/hpopi5b-panel/probe-remote.pl` → 开发目录。
 
 **运行态必须有状态变迁日志**（`rlog()`）：拉起 / 已连上 / EOF / 进程退出 / 超时重连，
 每次变迁一行。没有它的时候，线上「离线」只能靠猜 —— 2026-10-21 就是这么排查了半小时。
@@ -173,7 +173,7 @@ typedef struct {
 
 ```
 fetch-trending.py（urllib + regex，GitHub 没有 trending API）
-     └─ 原子写 /var/cache/hphelm-panel/trending.tsv   ← systemd timer 每 3h
+     └─ 原子写 /var/cache/hpopi5b-panel/trending.tsv   ← systemd timer 每 3h
               │
 scene_trending.c  stat() 比对 mtime/size，文件变了才重读；sig 里混进「分钟」
               └─ 无文件 = 空态（写清楚该跑哪个 service，不装假数据）
@@ -224,19 +224,19 @@ panel.c   每 10s 看一次钟；到点 → 淡出(0.45s) → 换色+重画 bgpi
 ## 四、认证：唯一的特权代码
 
 ```
-面板（普通用户） ──写密码到 stdin──▶ hphelm-auth（setuid root, ~120 行）
-                                        │ pam_start("hphelm-auth") → pam_authenticate → pam_acct_mgmt
+面板（普通用户） ──写密码到 stdin──▶ hpopi5b-auth（setuid root, ~120 行）
+                                        │ pam_start("hpopi5b-auth") → pam_authenticate → pam_acct_mgmt
                                         ▼
                                    stdout: OK / FAIL 原因
 ```
 
 | 项 | 内容 |
 | --- | --- |
-| 位置 | `/usr/local/libexec/hphelm-auth`（`-rwsr-xr-x root:root`） |
+| 位置 | `/usr/local/libexec/hpopi5b-auth`（`-rwsr-xr-x root:root`） |
 | 做什么 | **只做一件事**：从 stdin 读一行密码 → PAM 验一次 → 输出 `OK`/`FAIL 原因`。**不开 shell、不执行命令、不写文件** |
 | 限制 | `argv[1]` **必须等于 `getuid()` 对应的用户名** ⇒ 就算被滥用也不能横向验证别人 |
 | 密码安全 | **只走 stdin**：不进 argv（`ps` 可见）、不进 env（`/proc/pid/environ` 可见） |
-| PAM 服务 | ⚠️ **专用** `/etc/pam.d/hphelm-auth`，只留 `pam_unix`。**绝不复用 `login` 栈** |
+| PAM 服务 | ⚠️ **专用** `/etc/pam.d/hpopi5b-auth`，只留 `pam_unix`。**绝不复用 `login` 栈** |
 | 防爆破 | 面板自己做指数退避（2/4/8/16/32 秒），与 DM 的 faillock 完全解耦 |
 
 **为什么绝不复用 `login` 栈**：`login → system-local-login → system-auth` 带 `pam_faillock`，
@@ -245,9 +245,9 @@ panel.c   每 10s 看一次钟；到点 → 淡出(0.45s) → 换色+重画 bgpi
 
 **自检（不需要密码）**：
 ```sh
-/usr/local/libexec/hphelm-auth                  # FAIL usage
-/usr/local/libexec/hphelm-auth root             # FAIL 只允许验证调用者本人
-echo wrong | /usr/local/libexec/hphelm-auth $USER   # FAIL Authentication failure（说明 PAM 真的跑了）
+/usr/local/libexec/hpopi5b-auth                  # FAIL usage
+/usr/local/libexec/hpopi5b-auth root             # FAIL 只允许验证调用者本人
+echo wrong | /usr/local/libexec/hpopi5b-auth $USER   # FAIL Authentication failure（说明 PAM 真的跑了）
 ```
 
 ---

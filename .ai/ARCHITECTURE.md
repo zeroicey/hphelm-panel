@@ -16,7 +16,7 @@
 | --- | --- | --- | --- |
 | 语言 | C（+ pango 做文字整形） | gcc，`-O2 -Wall -Wextra` | 实测：GTK4 119 MiB vs 自绘 7.4 MiB；Rust 只省 0.4 MiB，不值一套工具链 |
 | 绘图 | X11 + cairo + pango，**无 GUI 工具包** | `x11 x11-xcb xscrnsaver cairo cairo-xlib pangocairo` | 「不引工具包」是立项理由；cairo+pango 就是 GTK 底下那同一套 |
-| 认证 | setuid 助手 `hphelm-auth`（~120 行）+ 专用 PAM 服务 | `pam_unix` only | 特权面最小；复用 `login` 栈会带 `pam_faillock` 连坐 autologin |
+| 认证 | setuid 助手 `hpopi5b-auth`（~120 行）+ 专用 PAM 服务 | `pam_unix` only | 特权面最小；复用 `login` 栈会带 `pam_faillock` 连坐 autologin |
 | 数据 | 只读 `/proc`、`/sys`（不 fork、不起子进程） | — | 1 Hz 采样、2 线程、Private 内存 ~5 MiB |
 | 运行 | lightdm(autologin) → `/usr/local/bin/hphelm-session` → 本程序 | — | 会话入口负责 `xset`、日志轮转、守护循环、兜底 |
 
@@ -29,7 +29,7 @@
 | `src/view.c` | 绘制基元（文字/渐变/细线/条/柱/sparkline/量程） | 偶尔 |
 | `src/metrics.c` | `/proc` `/sys` 采集，按时间节流 | 加指标时 |
 | `src/panel.c` | X11 窗口、事件、状态机、主循环、双缓冲、仪表 | 改交互时 |
-| `src/auth.c` + `src/hphelm-auth.c` | 认证通道与 setuid 助手 | 一般不动 |
+| `src/auth.c` + `src/hpopi5b-auth.c` | 认证通道与 setuid 助手 | 一般不动 |
 | `tools/deploy.sh` | **原地部署 + 判据**（构建 → 备份 → 安装 → 重启 → 判据） | 每次上真屏 |
 | `tools/{measure.py,render-ascii.py,render-region.py,probe-frames}` | 看不到图时的像素判据 | 改 UI 时 |
 | `docs/` | 架构/设计/验证/部署/坑（权威细节） | 每轮同步 |
@@ -40,9 +40,9 @@
 lightdm autologin → /usr/local/bin/hphelm-session
       ├─ xset s off / xset dpms 0 0 0        （DPMS 交给面板自己管）
       ├─ 日志轮转（>1MiB ⇒ tail -c 256K）
-      └─ while :; do hphelm-panel --state panel; … done   （失败判据 = 运行时长 <5s）
+      └─ while :; do hpopi5b-panel --state panel; … done   （失败判据 = 运行时长 <5s）
 
-hphelm-panel 主循环（poll 超时驱动，1 Hz 采样）
+hpopi5b-panel 主循环（poll 超时驱动，1 Hz 采样）
       PANEL ──键盘/鼠标──▶ LOGIN ──PAM 通过──▶ 桌面（取消映射、放键盘）
         ▲                                            │
         └────────── 空闲 180s ◀───────────────────────┘
@@ -53,16 +53,16 @@ hphelm-panel 主循环（poll 超时驱动，1 Hz 采样）
 1. **绘制**：所有绘制进离屏 `Pixmap`，每帧**一次** `XCopyArea` 上屏；`content_sig()` 无变化不重绘。
 2. **采样**：1 Hz 按**时间**节流（不是每轮循环一次）；速率用单调时钟；IP/进程榜另按 10s/3s 刷。
 3. **认证**：面板通过 stdio 把密码交给 setuid 助手，助手只用 `pam_unix` 验，回一个结果；密码不落盘、不进 argv。
-4. **部署**：本机 `tools/deploy.sh`（源码目录 = 部署目录 `/data/dev/hphelm-panel`）。
+4. **部署**：本机 `tools/deploy.sh`（源码目录 = 部署目录 `/data/dev/hpopi5b-panel`）。
 
 ## 5. Invariants
 
-1. `ldd /usr/local/bin/hphelm-panel` 里 GUI 工具包数量 = **0**（gtk/qt/fltk 一个都不许出现）。
-2. 安装后「源码二进制 ⇄ `/usr/local/bin/hphelm-panel`」**逐字节一致**；助手权限 `4755 root:root`。
-3. `/etc/pam.d/hphelm-auth` 只含 `pam_unix` 的 `auth`+`account` 两行（不得 `@include login`）。
+1. `ldd /usr/local/bin/hpopi5b-panel` 里 GUI 工具包数量 = **0**（gtk/qt/fltk 一个都不许出现）。
+2. 安装后「源码二进制 ⇄ `/usr/local/bin/hpopi5b-panel`」**逐字节一致**；助手权限 `4755 root:root`。
+3. `/etc/pam.d/hpopi5b-auth` 只含 `pam_unix` 的 `auth`+`account` 两行（不得 `@include login`）。
 4. 会话入口与守护循环里**没有任何** `dm-tool` / `light-locker` 调用；兜底只允许 `xset dpms force off`。
 5. 守护循环的失败判据是**运行时长 <5 秒**，不是退出码（SIGTERM = 143）。
-6. 现场稳态：`tty7` · `slick-greeter=0` · `hphelm-panel=1` · `sleep_off=off` · 帧差分 0 帧 >30%。
+6. 现场稳态：`tty7` · `slick-greeter=0` · `hpopi5b-panel=1` · `sleep_off=off` · 帧差分 0 帧 >30%。
 7. 预算：CPU < 1% of one core（现状 1.1~1.6%，**待查**）· 线程 2 · Private 内存 ~5 MiB · 采样 1 Hz。
 8. 版式坐标只写在 `src/theme.h` 的 `L_*` 常量里（逻辑像素，主循环统一 `cairo_scale`）。
 

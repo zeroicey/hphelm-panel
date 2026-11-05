@@ -1,20 +1,23 @@
-# AGENTS.md —— 给「负责 hphelm-panel 的 AI」的工作指南
+# AGENTS.md —— 给「负责 hpopi5b-panel 的 AI」的工作指南
 
 > 你是这个项目的专职维护者。这份文件是你的操作手册：**先读它，再动手**。
 > 详细材料在 `docs/`；逐轮交接与当前待办在 `HANDOFF.md`；**项目记忆库在 `.ai/`**（见文末契约）。
-> 最后更新：**2026-10-21**（源码与部署目录合一 = `hphelm:/data/dev/hphelm-panel`）。
+> 最后更新：**2026-11-05**（改名 `hphelm-panel` → `hpopi5b-panel` 并把项目归位到 `/data/dev/project/`）。
+> **现役形态**：源码工作副本 = **hpcmd `/data/dev/project/hpopi5b-panel`**（只改代码 + push，不在本机构建/部署）；
+> 运行机 = **hpopi5b**（Orange Pi 5，kiosk 纯显示终端）。下面 2026-10-21 的「本机原地部署 / lightdm / 锁屏」
+> 章节属于 hphelm 时代，**已失效**；部署以 `docs/deploy.md` 的「三十秒版」为准。
 
 ---
 
 ## 0. 三十秒上手
 
 ```sh
-cd /data/dev/hphelm-panel   # 在 hphelm 本机；这个目录既是源码也是部署目录
-make                        # 需要 pkg-config: x11 x11-xcb xscrnsaver cairo cairo-xlib pangocairo
+cd /data/dev/project/hpopi5b-panel   # hpcmd 上的工作副本（源码 ≠ 部署机）
+make panel                          # 本机只做离屏验证；arm64 真机构建在 hpopi5b 上
 
 # 先在隔离环境看效果（不要一上来动真屏）
 Xvfb :9 -screen 0 1920x1080x24 -ac &
-DISPLAY=:9 ./hphelm-panel --state panel --lock /tmp/xv9.lock    # --lock 避免和真机实例抢锁
+DISPLAY=:9 ./hpopi5b-panel --state panel --lock /tmp/xv9.lock    # --lock 避免和真机实例抢锁
 
 # 更新系统屏保（构建 → 备份旧二进制 → 安装 → 重启 → 判据，一条命令）
 tools/deploy.sh --check     # 只看会做什么（只读）
@@ -112,12 +115,12 @@ README 的「这不是给谁用的」那张表就是**设计边界**——不要
 # ① 不闪：抓窗口连续帧，>30% 像素变化的帧必须是 0
 DISPLAY=:0 tools/probe-frames 60
 # ② 主循环正常：2 it/s、poll 全是超时、事件 0
-HPHELM_PANEL_DEBUG=1 ./hphelm-panel --state panel --lock /tmp/x.lock   # 每秒一行
+HPOPI5B_PANEL_DEBUG=1 ./hpopi5b-panel --state panel --lock /tmp/x.lock   # 每秒一行
 # ③ CPU：读 /proc/<pid>/stat 的 utime+stime（jiffies × 10ms / 窗口 ms）
 # ④ 红线没被碰：VT 还在 tty7、没有 greeter、单实例
 cat /sys/class/tty/tty0/active          # 期望 tty7
 pgrep -cx slick-greeter                 # 期望 0
-pgrep -cx hphelm-panel                  # 期望 1
+pgrep -cx hpopi5b-panel                  # 期望 1
 # ⑤ 几何（改 UI 时）：量柱宽/间距/对齐/行距，与设计值逐位对
 python3 tools/measure.py assets/panel.png --runs 240 --bands
 ```
@@ -155,7 +158,7 @@ python3 tools/measure.py assets/panel.png --runs 240 --bands
 | `src/remote.[ch]` | **生产服务器**采集（ssh 长连接 + 非阻塞解析 + 退避重连） | 改远端协议时 |
 | `tools/probe-remote.pl` | 喂给被监控机的**只读**探针（从 stdin 进，不落盘到对方） | 加远端指标时 |
 | `src/panel.c` | X11 窗口、事件、状态机、主循环、双缓冲、幕渲染入口、仪表 | 改交互时 |
-| `src/auth.c` + `src/hphelm-auth.c` | 认证（助手是唯一的特权代码，~120 行） | 一般不动 |
+| `src/auth.c` + `src/hpopi5b-auth.c` | 认证（助手是唯一的特权代码，~120 行） | 一般不动 |
 
 ---
 
@@ -183,7 +186,7 @@ python3 tools/measure.py assets/panel.png --runs 240 --bands
 2. **改了行为/接口/版式** ⇒ 同步 `README.md` 与对应的 `docs/*.md`（README 是门面，docs 是细节）。
 3. **提交信息**：一句话说清「改了什么 + 为什么」，带判据数字（沿用现有提交风格，中文即可）。
 4. **机队事实变更**（部署路径、服务名、红线、VT 守卫）⇒ 必须提醒维护 kb 的人更新
-   `kb/runbooks/hphelm.md` 的「运维面板（hphelm-panel）」节（kb 主副本在 `hphelm:/data/kb`）。
+   `kb/runbooks/hphelm.md` 的「运维面板（hpopi5b-panel）」节（kb 主副本在 `hphelm:/data/kb`）。
    **代码知识归本仓库，机队事实归 kb。**
 5. **不要 force-push、不要改历史**；`main` 分支直接提交（本项目单人维护）。
 
@@ -193,16 +196,16 @@ python3 tools/measure.py assets/panel.png --runs 240 --bands
 
 | 项 | 值 |
 | --- | --- |
-| 源码（权威）= 部署目录 | **`hphelm:/data/dev/hphelm-panel`**（同一份，2026-10-19 起） |
+| 源码（权威）= 部署目录 | **`hphelm:/data/dev/hpopi5b-panel`**（同一份，2026-10-19 起） |
 | 本机 | `hphelm`（GMKtec G10）· Arch + X11 + lightdm(autologin) + bspwm + picom |
-| 公开镜像 | `github.com/zeroicey/hphelm-panel`（`origin`，public，无 license） |
+| 公开镜像 | `github.com/zeroicey/hpopi5b-panel`（`origin`，public，无 license） |
 | 推代码 | ⚠️ **hphelm 的 GitHub 身份只够推 `dotfiles`**（deploy key 一仓一把）⇒ 从本机 `git push` 会权限失败。提交在本地做；推送要么等有账号级密钥的机器，要么给本仓加一把 write deploy key（未做） |
-| 二进制 | `/usr/local/bin/hphelm-panel` + `/usr/local/libexec/hphelm-auth`（4755 root:root） |
-| 上一版二进制 | `/usr/local/bin/hphelm-panel.prev`（`deploy.sh` 内容不同时自动留） |
+| 二进制 | `/usr/local/bin/hpopi5b-panel` + `/usr/local/libexec/hpopi5b-auth`（4755 root:root） |
+| 上一版二进制 | `/usr/local/bin/hpopi5b-panel.prev`（`deploy.sh` 内容不同时自动留） |
 | 会话入口 | `/usr/local/bin/hphelm-session`（守护循环 + 日志轮转） |
-| 运行日志 | `/tmp/hphelm-panel.log`（会话启动时按大小轮转） |
-| PAM 服务 | `/etc/pam.d/hphelm-auth`（**专用**，只留 `pam_unix`） |
-| 机队事实权威 | `kb` 的 `runbooks/hphelm.md`「运维面板（hphelm-panel）」节（kb 主副本也在 hphelm：`/data/kb`） |
+| 运行日志 | `/tmp/hpopi5b-panel.log`（会话启动时按大小轮转） |
+| PAM 服务 | `/etc/pam.d/hpopi5b-auth`（**专用**，只留 `pam_unix`） |
+| 机队事实权威 | `kb` 的 `runbooks/hphelm.md`「运维面板（hpopi5b-panel）」节（kb 主副本也在 hphelm：`/data/kb`） |
 | 项目记忆库 | `.ai/`（engram v0.5.0 初始化于 2026-10-21）· `engram dump` 出 ≤1.5 KB 指纹 |
 
 <!-- engram:managed -->

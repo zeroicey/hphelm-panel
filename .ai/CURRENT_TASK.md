@@ -2,7 +2,23 @@
 
 <!-- The single live surface. Keep it under ~60 lines: it is read on every session start. -->
 
-**Status:** 🟢 active · **Updated:** 2026-11-05（第十一轮：生产迁移与验收完成）
+**Status:** 🟢 active · **Updated:** 2026-11-05（第十二轮：第 4 格曲线换成磁盘 I/O，待真机验收）
+
+## 第十二轮：第 4 格曲线 = 磁盘 I/O（2026-11-05）
+
+- 用户报障（m00001）：hpcmd 列「磁盘上方那条折线」不显示，hpcore 有 —— 那不是磁盘曲线，是**温度**；
+  两处读取端都只认 `hwmon name == k10temp`，hpcmd 是 KVM guest（`/sys/class/hwmon` 空）、Pi 是 `soc_thermal`
+  ⇒ 三列里只有 hpcore 画得出。用户裁决「可以」（m00071）。
+- 已改完（源码）：第 4 格 → 磁盘 I/O 双曲线（teal 读 / peach 写，共享量程）；磁盘行右侧显示当前速率，
+  盘累计 GB 挪脚注；`read_disk()` 改扫 `/sys/block` 所有整盘（跳 loop/ram/zram/nbd/sr/fd/dm-/mtdblock）；
+  探针尾部追加 `diskReadBps diskWriteBps`；`remote.c` 补全整个追加段解析（此前缓存/PSI/线程/累计/丢错**恒为 0**）；
+  字段 `have_ssd/ssd_*` → `have_disk/disk_*`。
+- 已验：`-Wall -Wextra` 零告警；离屏 PPM 量测 4 格/列、`ch=87.4`、余 0.0、I/O 格两色都在（日/夜主题）、
+  磁盘行与脚注无重叠；`probe-remote.pl` 实跑 33 字段。
+- **未验（下一步）**：真机 `make panel` + `tools/deploy.sh`（hpcmd 缺 `X11/extensions/scrnsaver.h`、无 make，
+  编不了 `panel.c`）⇒ CPU / RSS / 无闪帧 / `pgrep -cx` 判据；`metrics.h` 改了结构，必须整体重建。
+- 已知取舍：I/O 双曲线共享量程 ⇒「写≪读」时写曲线贴基线（与网络 ↓/↑ 同规矩）。若用户嫌不明显，
+  可考虑写曲线单独量程（会失去同量纲对比）。
 
 ## 第十轮：改名与落点（2026-11-05）
 

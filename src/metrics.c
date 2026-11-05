@@ -194,8 +194,16 @@ static double read_psi(const char *path) {
     return p ? strtod(p + 6, NULL) : 0;
 }
 
-/* ---------------- 磁盘 ---------------- */
-static void read_disk(metrics_t *m) {
+/* ---------------- 磁盘 ----------------
+ * ① 用量：statvfs("/")
+ * ② 累计 + 此刻速率：/sys/block 下**整盘**设备的 stat（read_sectors / write_sectors × 512）
+ *    ⚠️ 2026-11-05 之前只认 nvme0n* ⇒ Pi（mmcblk1）和 hpcmd（vda）上
+ *    「SSD 读/写」和磁盘曲线整格都是空的。判据：三台机的整盘分别是
+ *    vda / mmcblk1 / nvme0n1+sda，只认 nvme 等于只有 hpcore 有数。
+ *    也就是说字段叫 disk_* 而不是 ssd_*：Pi 上那块是 SD/eMMC，写「SSD」是错的。
+ * ③ 跳过的设备：loop/ram/zram/nbd/sr/fd/mtdblock（不是真盘）与 dm-*（映射层，
+ *    与底层整盘重复计数）。分区不在 /sys/block 里，天然不会重复。 */
+static void read_disk(metrics_t *m, double dt) {
     struct statvfs vfs;
     if (statvfs("/", &vfs) == 0 && vfs.f_blocks) {
         double total = (double)vfs.f_blocks * vfs.f_frsize;
@@ -204,30 +212,47 @@ static void read_disk(metrics_t *m) {
         m->disk_free_gb = freeb / 1073741824.0;
         m->disk_used_pct = 100.0 * (total - freeb) / total;
     }
-    /* NVMe 累计读写（扇区 × 512） */
+    /* 整盘累计读写（扇区 × 512） */
     DIR *d = opendir("/sys/block");
     if (!d) return;
     struct dirent *e;
     char path[512], line[512];
+    unsigned long long rd = 0, wr = 0;
+    int ndev = 0;
     while ((e = readdir(d))) {
-        if (strncmp(e->d_name, "nvme", 4) != 0) continue;
-        if (strncmp(e->d_name, "nvme0n", 6) != 0) continue;
-        snprintf(path, sizeof path, "/sys/block/%s/stat", e->d_name);
+        const char *n = e->d_name;
+        if (!strcmp(n, ".") || !strcmp(n, "..")) continue;
+        if (!strncmp(n, "loop", 4) || !strncmp(n, "ram", 3) || !strncmp(n, "zram", 4) ||
+            !strncmp(n, "nbd", 3) || !strncmp(n, "sr", 2) || !strncmp(n, "fd", 2) ||
+            !strncmp(n, "dm-", 3) || !strncmp(n, "mtdblock", 8))
+            continue;
+        snprintf(path, sizeof path, "/sys/block/%s/stat", n);
         if (!read_line(path, line, sizeof line)) continue;
-        unsigned long long rd = 0, wr = 0;
         /* 字段：read_ios read_merges read_sectors ... write_ios write_merges write_sectors */
         unsigned long long f1, f2, f3, f4, f5, f6, f7;
-        if (sscanf(line, "%llu %llu %llu %llu %llu %llu %llu",
-                   &f1, &f2, &f3, &f4, &f5, &f6, &f7) == 7) {
-            rd = f3;
-            wr = f7;
-        }
-        m->ssd_read_gb = (double)rd * 512.0 / 1073741824.0;
-        m->ssd_written_gb = (double)wr * 512.0 / 1073741824.0;
-        m->have_ssd = 1;
-        break;
+        if (sscanf(line, "%llu %llu %llu %llu %llu %llu %llu", &f1, &f2, &f3, &f4, &f5, &f6,
+                   &f7) != 7)
+            continue;
+        rd += f3;
+        wr += f7;
+        ndev++;
     }
     closedir(d);
+    if (!ndev)
+        return; /* 一个整盘都没找到 ⇒ have_disk 保持 0，速率留 0（不拿假的 0 冒充「没读没写」）*/
+    m->have_disk = 1;
+    m->disk_read_gb = (double)rd * 512.0 / 1073741824.0;
+    m->disk_written_gb = (double)wr * 512.0 / 1073741824.0;
+    /* 速率：和网络同一套算法（单调时钟 dt，不用整秒差） */
+    static unsigned long long p_rd, p_wr;
+    static int first = 1;
+    if (!first && rd >= p_rd && wr >= p_wr && dt > 0.05) {
+        m->io_rd_bps = (double)(rd - p_rd) * 512.0 / dt;
+        m->io_wr_bps = (double)(wr - p_wr) * 512.0 / dt;
+    }
+    p_rd = rd;
+    p_wr = wr;
+    first = 0;
 }
 
 /* ---------------- 网络 ---------------- */
@@ -452,7 +477,7 @@ void metrics_sample(metrics_t *m, int want_procs) {
         m->freq_mhz = (long)(khz / 1000);
 
     read_mem(m);
-    read_disk(m);
+    read_disk(m, dt);
     /* 容器数：数 cgroup 里的 docker-*.scope（不 fork docker，几乎零成本，10 秒一次）。
        -1 = 这个核没有 docker（面板不显示这一项，绝不显示假的「0 个」）。 */
     static double t_dock;
@@ -483,5 +508,7 @@ void metrics_sample(metrics_t *m, int want_procs) {
 
     ring_push(&m->cpu_hist, m->cpu_pct);
     ring_push(&m->mem_hist, m->mem_pct);
+    ring_push(&m->io_rd_hist, m->io_rd_bps);
+    ring_push(&m->io_wr_hist, m->io_wr_bps);
     if (m->temp_c >= 0) ring_push(&m->temp_hist, m->temp_c);
 }

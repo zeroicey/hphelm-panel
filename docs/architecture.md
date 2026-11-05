@@ -258,10 +258,11 @@ echo wrong | /usr/local/libexec/hpopi5b-auth $USER   # FAIL Authentication failu
 | --- | --- | --- |
 | CPU 总量/每核 | `/proc/stat` 一次遍历 | 差值算法，窗口 = 采样周期 |
 | load | `/proc/loadavg` | |
-| 温度 | `/sys/class/hwmon/*/name == k10temp` → `temp1_input` | **本机硬件**；换机器要改 |
+| 温度（仅文本） | `/sys/class/hwmon/*/name == k10temp` → `temp1_input` | **本机硬件**；KVM 虚拟机常**没有** hwmon（`hpcmd` 就是），Pi 是 `soc_thermal` ⇒ 没读到的机器只不显示文本，不再占一格空白曲线 |
 | governor / 频率 | `/sys/devices/system/cpu/cpu0/cpufreq/` | |
 | 内存 / swap(zram) | `/proc/meminfo`（`MemAvailable`、`SwapTotal/Free`） | zram 也走 SwapTotal |
-| 磁盘 | `statvfs("/")` + `/sys/block/nvme0n*/stat`（扇区×512） | **设备名是本机的** |
+| 磁盘用量 | `statvfs("/")` | |
+| 磁盘读写 | `/sys/block/<整盘>/stat`（read_sectors / write_sectors × 512，各盘求和）| 跳过 `loop/ram/zram/nbd/sr/fd/dm-/mtdblock`；分区不在 `/sys/block` 下，天然不重复。**不要只认 `nvme*`**（Pi 是 `mmcblk1`、`hpcmd` 是 `vda`） |
 | 网络速率 | `/sys/class/net/<iface>/statistics/{rx,tx}_bytes` | 差值 / dt |
 | 网卡选择 | 遍历 `/sys/class/net`，**判据是「有全局 IPv4」** | ⚠️ 不能靠 `readdir` 顺序（实测先返回没接线的 `wlp1s0`） |
 | IP / tailscale | `getifaddrs` | 最贵 ⇒ 10 秒一次 |

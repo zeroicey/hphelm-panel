@@ -15,7 +15,60 @@
 > **前五轮成果一句话**：功能跑通（桌面↔面板↔登录）→ 消闪（离屏 pixmap）→ 修掉自激空转
 > （CPU 33~49% → 0.60%）→ 无卡片紧凑版式 + 进程榜 40 条 → 立为独立项目（仓库 + 交接文档）。
 >
-> **最后更新：2026-10-21（第六轮）。**
+> **最后更新：2026-11-05（第十二轮：第 4 格曲线换成磁盘 I/O）。**
+
+---
+
+## 第十二轮：第 4 格曲线从「温度」换成「磁盘 I/O」（2026-11-05）
+
+**用户报障**（m00001）：「资源面板 hpcmd 磁盘上方的折线图不显示，hpcore 有。是因为 hpcmd 是 hpcore 的虚拟系统吗」
+
+**诊断**（两条都对，且比他猜的更糟）
+
+- 那条曲线是**温度**。两处读取端都只认 `hwmon name == k10temp`：`src/metrics.c` 的 `read_temp()`、
+  `tools/probe-remote.pl` 的 `temp_c()`。
+- `hpcmd` 确实是 `hpcore` 上的 KVM guest（`virsh list --all` ⇒ `hpcmd running`；`systemd-detect-virt` = kvm；
+  DMI = QEMU）。它 `/sys/class/hwmon` **整个是空的** ⇒ 永远没有温度。
+- 部署机 Pi（hpopi5b）的 hwmon 叫 `soc_thermal`/`*_thermal`，也不叫 k10temp ⇒ **三列里只有 hpcore 画得出来**。
+- 顺带查出两个更大的洞：① `read_disk()` 只认 `/sys/block/nvme0n*`（Pi 是 `mmcblk1`、hpcmd 是 `vda`）
+  ⇒ 那两列连「SSD 累计读/写」都是空的；② `remote.c` 对探针的**追加段从未解析** ⇒ 远端列的
+  缓存 / PSI / 线程数 / 累计流量 / 丢错包 **永远是 0**（拿假 0 冒充真数据）。
+
+**改了什么**（用户裁决「可以」，m00071）
+
+- **第 4 格 = 磁盘 I/O 双曲线**：teal 读 / peach 写（与网络 ↓/↑ 同色系），共享量程。
+  该格不设标题行：颜色即图例，当前值写在下面磁盘行（同色「读 X 写 Y」）。理由写进了
+  `src/view_panel.c` 的注释（温度已有 °C 文本 / 无传感器机器整格空白 / 磁盘速率是唯一缺的维度）。
+- `read_disk(m, dt)`：扫 `/sys/block` **所有整盘** stat（扇区 × 512，求和），跳过
+  `loop/ram/zram/nbd/sr/fd/dm-/mtdblock`；速率走单调时钟 `dt`（与 `read_net` 同口径）。
+  字段改名 `have_ssd`→`have_disk`、`ssd_{read,written}_gb`→`disk_*`（Pi 上那块是 SD/eMMC，叫 SSD 是错的）。
+- 磁盘行右侧改成速率；**盘累计 GB 挪到脚注**并改称「盘 读 X 写 Y」（慢变值不该占当前值的位置）；
+  `剩 X / Y` 里的大数也统一用 T（原来 free 恒用 G ⇒ 「剩 2197G / 3.6T」）。
+- `tools/probe-remote.pl`：新增 `disk_rw()` + 两个尾部字段 `diskReadBps diskWriteBps`（仍遵守「只追加」）；
+  `src/remote.c`：`S_MAX_FIELDS` 32→36，**补全整个追加段的解析**（t[22..32]，老探针缺字段仍是 0）。
+
+**判据（hpcmd 上能做的都做了）**
+
+- 编译：`gcc -O2 -Wall -Wextra` 编 `view_panel.c/view.c/theme.c/metrics.c` **零告警**，`remote.c` `-fsyntax-only` 通过。
+- 版式（离屏 harness 直调 `view_panel_draw` → PPM → 自写 stdlib 分析器，因为 hpcmd 没有
+  Xvfb/make/pkg-config/ImageMagick/PIL）：
+  - 每列 **4 张曲线**（CPU 202 / 内存 338 / 网络 456 / I/O 549 逻辑 y），`ch = 87.4`、`余 = 0.0`；
+  - I/O 格两个颜色都在：远端 teal 845–888、peach 928–934（写 12M vs 读 84M ⇒ 共享量程下贴基线，是设计本意）；
+    本机 `io_wr = 0` 时 peach 只有贴底 1 行（诚实零基线，不是画丢了）；
+  - 白天主题（`theme_set(0)`）同样两色可见（1948 / 1036 px）；
+  - 文字无重叠：磁盘行整行墨迹 0.7→285 逻辑 px，脚注到右对齐「压力」还有 **93 逻辑 px** 空隙。
+- 探针：`perl -c` OK；在 hpcmd 实跑输出 **33 字段**（尾部出现 `.8M/s` 写速率），`tempC = -1.0` 也印证了没有 hwmon。
+
+**没验的（必须在 hpopi5b 上补）**：CPU / RSS 判据 —— hpcmd 编不了 `panel.c`（缺
+`X11/extensions/scrnsaver.h`、无 make），只能到真机 `make panel` + `tools/deploy.sh`。
+估计增幅 < 0.1%（每秒多读 5 个小文件，page cache 命中；每帧多一条 sparkline 描边）。
+⚠️ 改 `metrics.h` 结构 ⇒ 真机必须**整体重建**（`make panel`），不能只换二进制与源码里的旧目标文件混链。
+
+**踩的坑**：离屏 harness 首次出图**全黑** —— 忘了 `theme_set()`，`TP` 调色板全 0（黑底画黑字）。
+记进 `.ai/pitfalls/cases/2026-11-05-offscreen-harness-all-black.md`（含「红矩形对照」判据与完整编译命令）。
+
+**文档**：`README`（面板能力表 + 数据源）、`docs/design.md`（版面 ASCII、四张曲线清单、色语义）、
+`docs/architecture.md`（温度只有文本 / 磁盘扫所有整盘）、`.ai/decisions/2026-11-05-chart-slot-disk-io.md`。
 
 ---
 

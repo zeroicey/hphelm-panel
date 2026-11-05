@@ -230,9 +230,9 @@ static long tlong(const char *s) { return s ? strtol(s, NULL, 10) : 0; }
 /* S <ts> <host> <cpu%> <ncore> <uptime> <memT> <memU> <swapT> <swapU> <disk%:GB>
  *   <rxBps> <txBps> <tempC> <l1> <l5> <l15> <freqMHz> <dock> <nproc> <gov> <iface> <ip>
  *   [追加段，可缺] <memCachedMB> <psiCpu> <psiMem> <psiIo> <nthreads> <rxTotalMB>
- *                  <txTotalMB> <netErr> <netDrop>
+ *                  <txTotalMB> <netErr> <netDrop> <diskReadBps> <diskWriteBps>
  * ⚠️ 追加段一律**可选**：老探针（只发 22 个字段）也要能跑，缺的就留 0。 */
-#define S_MAX_FIELDS 32
+#define S_MAX_FIELDS 36
 static void parse_S(metrics_t *m, char *rest) {
     char *t[S_MAX_FIELDS];
     int n = 0;
@@ -276,8 +276,22 @@ static void parse_S(metrics_t *m, char *rest) {
     snprintf(m->iface, sizeof m->iface, "%s", t[20]);
     snprintf(m->ip, sizeof m->ip, "%s", t[21]);
     m->net_up = m->ip[0] != 0;
-    /* 远端不采集 NVMe 累计读写（要逐块读 /sys/block 下的 stat，收益不大） */
-    m->have_ssd = 0;
+    /* [追加段] 老探针只发 22 个字段 ⇒ 缺的留 0（老探针 + 新面板不会崩）。
+       ⚠️ 2026-11-05 之前这一段**从未被解析**：探针一直在发，面板却永远显示
+       「压力 cpu 0 · io 0 / 缓存 0M / 线程 0 / 累计 0G」——拿假 0 冒充真数据。 */
+    if (n > 22) m->mem_cached_mb = tdouble(t[22]);
+    if (n > 23) m->psi_cpu = tdouble(t[23]);
+    if (n > 24) m->psi_mem = tdouble(t[24]);
+    if (n > 25) m->psi_io = tdouble(t[25]);
+    if (n > 26) m->nthr = (int)tlong(t[26]);
+    if (n > 27) m->rx_total_mb = tdouble(t[27]);
+    if (n > 28) m->tx_total_mb = tdouble(t[28]);
+    if (n > 29) m->net_err = tlong(t[29]);
+    if (n > 30) m->net_drop = tlong(t[30]);
+    if (n > 31) m->io_rd_bps = tdouble(t[31]);
+    if (n > 32) m->io_wr_bps = tdouble(t[32]);
+    /* 远端不采集整盘累计 GB（只采速率）：盘累计那行只在有 /sys/block 的机器上显示 */
+    m->have_disk = 0;
 }
 
 static void parse_C(metrics_t *m, char *rest) {
@@ -325,10 +339,14 @@ static int commit(remote_t *r, double now) {
     s->rx_hist = r->m.rx_hist;
     s->tx_hist = r->m.tx_hist;
     s->temp_hist = r->m.temp_hist;
+    s->io_rd_hist = r->m.io_rd_hist;
+    s->io_wr_hist = r->m.io_wr_hist;
     ring_push(&s->cpu_hist, s->cpu_pct);
     ring_push(&s->mem_hist, s->mem_pct);
     ring_push(&s->rx_hist, s->rx_bps);
     ring_push(&s->tx_hist, s->tx_bps);
+    ring_push(&s->io_rd_hist, s->io_rd_bps);
+    ring_push(&s->io_wr_hist, s->io_wr_bps);
     if (s->temp_c >= 0) ring_push(&s->temp_hist, s->temp_c);
     /* 本次连接的第一帧 ⇒ 记一行（每次重连都会记，数量有界；不靠 failures 判，
        因为「桌面↔面板」的正常切换不会累加 failures） */

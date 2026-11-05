@@ -52,8 +52,10 @@ typedef struct {
     int nrunning;           /* 当前可运行线程数 */
     /* 磁盘 */
     double disk_used_pct, disk_total_gb, disk_free_gb;
-    double ssd_read_gb, ssd_written_gb;
-    int have_ssd;
+    double disk_read_gb, disk_written_gb; /* 整盘累计（自开机；非 loop/ram/mtd 设备求和） */
+    int have_disk;                        /* 找到过整盘 ⇒ 累计 GB 与速率才有意义 */
+    /* 磁盘此刻的读写速率（B/s，所有整盘设备求和；本机与远端都采） */
+    double io_rd_bps, io_wr_bps;
     /* 网络 */
     char iface[16];
     char ip[40];
@@ -75,6 +77,8 @@ typedef struct {
     ring_t rx_hist;
     ring_t tx_hist;
     ring_t temp_hist;
+    ring_t io_rd_hist;
+    ring_t io_wr_hist;
 } host_metrics_t;
 
 /* 兼容旧名字（本机采集层与视图本来都叫 metrics_t） */

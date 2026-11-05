@@ -82,6 +82,8 @@ static void draw_proc_section(cairo_t *cr, const metrics_t *m, const char *tag, 
  *   ② 「进度条/图表压缩一点，不要留废话空间」⇒ 行高 24、条高 10、曲线吃掉剩余高度
  *   ③ 「竖着看下来还是挺空的，放一些别的资源」⇒ 新增：缓存/swap、丢包错包、PSI 压力、
  *      线程数、累计流量、温度曲线
+ *   ④ 2026-11-05：温度曲线**换成磁盘 I/O 双曲线**（温度在 CPU 行已有文本；没有 hwmon
+ *      的机器——`hpcmd` 是 KVM guest、Pi 是 `soc_thermal`——那一格永远空白）。
  *
  * 纵向是**流式**的：`y` 一行一行往下走，四张曲线最后均分剩下的高度。
  * ⚠️ 不要改回写死绝对坐标 —— 上一版加了内容就把底部顶出屏幕（且编译零告警）。
@@ -151,7 +153,7 @@ static void draw_host(cairo_t *cr, const view_ctx_t *v, const metrics_t *m, doub
                    + L_H_LINE_H                                        /* ④ 网络 */
                    + L_H_RULE_H + L_H_LINE_H + L_H_BAR_H + L_H_BAR_GAP /* ⑤ 磁盘 */
                    + L_H_FOOT_H;                                       /* ⑥ 脚注 */
-    const int nchart = 4; /* CPU / 内存 / 网络 / 温度 */
+    const int nchart = 4; /* CPU / 内存 / 网络 / 磁盘I/O */
     double spare = (bottom - y) - fixed - nchart * L_H_CHART_GAP;
     double ch = spare / nchart;
     if (ch < L_H_CHART_MIN) ch = L_H_CHART_MIN;
@@ -216,13 +218,17 @@ static void draw_host(cairo_t *cr, const view_ctx_t *v, const metrics_t *m, doub
         y += ch + L_H_CHART_GAP;
     }
 
-    /* ================= 温度曲线 ================= */
-    if (m->temp_c >= 0 && m->temp_hist.len >= 2) {
-        v_spark(cr, x, y, w, ch, &m->temp_hist, v_temp_color(m->temp_c), 0);
-        y += ch + L_H_CHART_GAP;
-    } else {
-        y += ch + L_H_CHART_GAP;
-    }
+    /* ================= 磁盘 I/O 曲线（读 teal / 写 peach，与网络同色系） =================
+     * ⚠️ 这里原来是**温度**曲线。换掉的理由：
+     *   ① 温度在 CPU 行已经有 `47°C` 文本（见上面），曲线是重复展示；
+     *   ② 没传感器的机器上它整格全空——hpcmd 是 hpcore 上的 KVM guest，
+     *      /sys/class/hwmon 整个是空的；Pi 的 hwmon 叫 soc_thermal 也不叫 k10temp。
+     *      两条读取端都只认 k10temp ⇒ 三列里只有 hpcore 那条线画得出来。
+     *   ③ 磁盘读写速率是面板上**唯一没有**的维度（原来只有累计 GB），
+     *      而且它就坐在磁盘块正上方，读图不用猜。
+     * 判据：vda / mmcblk1 / nvme0n1+sda 三台机的整盘都能采（见 metrics.c 的 read_disk）。 */
+    v_spark2(cr, x, y, w, ch, &m->io_rd_hist, C_TEAL, &m->io_wr_hist, C_PEACH, 0);
+    y += ch + L_H_CHART_GAP;
 
     /* ================= 磁盘 ================= */
     {
@@ -234,19 +240,23 @@ static void draw_host(cairo_t *cr, const view_ctx_t *v, const metrics_t *m, doub
         if (m->disk_total_gb >= 1024) snprintf(dtot, sizeof dtot, "%.1fT", m->disk_total_gb / 1024);
         else snprintf(dtot, sizeof dtot, "%.0fG", m->disk_total_gb);
         snprintf(dfree, sizeof dfree, "%.0fG", m->disk_free_gb);
-        v_text(cr, ax, y + 3, v_fd_small(), C_SUBTEXT0, "剩 %s / %s", dfree, dtot);
-        /* SSD 累计读写：本机有、远端不采 ⇒ 放在**同一行右对齐**，
-           这样两列底部仍然是同样的「块数」（单独占一行会让两列错位）。 */
-        if (m->have_ssd)
-            v_text_right(cr, x + w, y + 3, v_fd_small(), C_OVERLAY0, "SSD 读 %.0fG 写 %.0fG",
-                         m->ssd_read_gb, m->ssd_written_gb);
+        if (m->disk_free_gb >= 1024)
+            snprintf(dfree, sizeof dfree, "%.1fT", m->disk_free_gb / 1024);
+        ax += v_text(cr, ax, y + 3, v_fd_small(), C_SUBTEXT0, "剩 %s / %s", dfree, dtot) + 12;
+        /* 此刻的读写速率：它就是上面那条曲线的当前值（teal=读 / peach=写，颜色即图例）。
+           原来这里放的是**累计** GB —— 那是慢变值，挪到脚注；
+           速率本机与远端都采（探针追加段），所以两列都填得上。 */
+        v_fmt_rate(m->io_rd_bps, b1, sizeof b1);
+        v_fmt_rate(m->io_wr_bps, b2, sizeof b2);
+        ax += v_text(cr, ax, y + 3, v_fd_small(), C_TEAL, "读 %s", b1) + 10;
+        ax += v_text(cr, ax, y + 3, v_fd_small(), C_PEACH, "写 %s", b2) + 10;
         y += L_H_LINE_H;
         v_bar(cr, x, y, w, L_H_BAR_H, m->disk_used_pct / 100.0,
               m->disk_used_pct > 90 ? C_RED : C_TEAL);
         y += L_H_BAR_H + L_H_BAR_GAP;
     }
 
-    /* ================= 脚注：容器 · 线程 · PSI 压力 · SSD ================= */
+    /* ================= 脚注：容器 · 线程 · 盘累计 · PSI 压力 ================= */
     {
         double ax = x;
         if (m->ndocker >= 0)
@@ -254,6 +264,11 @@ static void draw_host(cairo_t *cr, const view_ctx_t *v, const metrics_t *m, doub
                          "容器 %d", m->ndocker) + 12;
         if (m->nthr > 0)
             ax += v_text(cr, ax, y, v_fd_small(), C_OVERLAY1, "线程 %d", m->nthr) + 12;
+        /* 盘累计读写：慢变值 ⇒ 脚注（原来挤在磁盘行右侧，把速率的位置占了） */
+        if (m->have_disk)
+            ax += v_text(cr, ax, y, v_fd_small(), C_OVERLAY0, "盘 读 %.0fG 写 %.0fG",
+                         m->disk_read_gb, m->disk_written_gb) +
+                  12;
         if (getenv("LAYOUT_DEBUG"))
             fprintf(stderr, "HOST %.0f: ch=%.1f 脚注y=%.1f 底线=%.1f 余=%.1f\n", x, ch, y, bottom,
                     bottom - (y + L_H_FOOT_H));

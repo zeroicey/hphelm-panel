@@ -9,6 +9,7 @@
 #   S <ts> <host> <cpu%> <ncore> <uptime> <memT> <memU> <swapT> <swapU> <disk%> <diskGB>
 #     <rxBps> <txBps> <tempC> <load1> <load5> <load15> <freqMHz> <dock> <nproc> <gov> <iface> <ip>
 #     <memCachedMB> <psiCpu> <psiMem> <psiIo> <nthreads> <rxTotalMB> <txTotalMB> <netErr> <netDrop>
+#     <diskReadBps> <diskWriteBps>   （整盘 /sys/block/*/stat 求和，跳 loop/ram/zram/mtd 等）
 #   ⚠️ 新字段**只能追加在末尾**：解析器对缺失字段取 0，老探针 + 新面板不会崩。
 #   C <core0%> <core1%> ...           （ncore 个）
 #   P <nproc> <pid>:<rssMiB>:<name>,...   （每 3 秒一次，最多 24 条）
@@ -151,9 +152,28 @@ for my $h (glob '/sys/class/hwmon/hwmon*') {
     last;
 }
 
+# 整盘累计读写扇区（× 512 = 字节）。跳过的设备与 src/metrics.c 的 read_disk() 同口径，
+# 否则本机列和远端列的曲线不可比：loop/ram/zram/nbd/sr/fd/mtdblock 不是真盘，
+# dm-* 是映射层（与底层整盘重复计数）。分区不在 /sys/block 里，天然不重复。
+sub disk_rw {
+    my ($rd, $wr) = (0, 0);
+    opendir my $d, '/sys/block' or return (0, 0);
+    my @dev = grep { $_ ne '.' && $_ ne '..' && !/^(loop|ram|zram|nbd|sr|fd|dm-|mtdblock)/ }
+        readdir $d;
+    closedir $d;
+    for my $n (@dev) {
+        my $s = slurp("/sys/block/$n/stat") // next;
+        my @f = split ' ', $s;
+        next if @f < 7;
+        $rd += $f[2];
+        $wr += $f[6];
+    }
+    return ($rd, $wr);
+}
+
 my $host = trim(slurp('/proc/sys/kernel/hostname') // 'remote');
 my ($iface, $ip) = iface_ip();
-my ($rx_p, $tx_p, $iter, $nproc_last, $dock) = (undef, undef, 0, 0, -1);
+my ($rx_p, $tx_p, $drd_p, $dwr_p, $iter, $nproc_last, $dock) = (undef, undef, undef, undef, 0, 0, -1);
 my $disk_stmt = '0:0';
 
 while (1) {
@@ -196,6 +216,15 @@ while (1) {
     my ($rx_bps, $tx_bps) = (0, 0);
     if (defined $rx_p) { $rx_bps = $rx - $rx_p; $tx_bps = $tx - $tx_p }
     ($rx_p, $tx_p) = ($rx, $tx);
+
+    # 磁盘读写速率（扇区 × 512 ⇒ B/s；循环一圈就是 1 秒，与上面 rx/tx 同口径）
+    my ($drd, $dwr) = disk_rw();
+    my ($drd_bps, $dwr_bps) = (0, 0);
+    if (defined $drd_p) {
+        $drd_bps = ($drd - $drd_p) * 512;
+        $dwr_bps = ($dwr - $dwr_p) * 512;
+    }
+    ($drd_p, $dwr_p) = ($drd, $dwr);
 
     # 磁盘（statvfs 没有核心模块 ⇒ 每 10 秒一次 df；fork 成本可忽略）
     my $disk = $disk_stmt;
@@ -250,12 +279,13 @@ while (1) {
     my $sw_free   = ($mi{SwapFree} // 0) / 1024;
 
     printf "S %d %s %.1f %d %.0f %.0f %.0f %.0f %.0f %s %.1f %.1f %.1f %s %s %s %.0f %d %d %s %s %s"
-         . " %.0f %.1f %.1f %.1f %d %.0f %.0f %d %d\n",
+         . " %.0f %.1f %.1f %.1f %d %.0f %.0f %d %d %.0f %.0f\n",
         time, $host, $cpu, $ncore // 0, $uptime,
         $mem_total, $mem_total - $mem_avail, $sw_total, $sw_total - $sw_free,
         $disk, $rx_bps, $tx_bps, $temp, $l1, $l5, $l15,
         $freqk / 1000, $dock, $nproc, $gov, $iface, $ip,
-        $mem_cached, $psi_cpu, $psi_mem, $psi_io, $nthr, $rx_total, $tx_total, $nerr, $ndrop;
+        $mem_cached, $psi_cpu, $psi_mem, $psi_io, $nthr, $rx_total, $tx_total, $nerr, $ndrop,
+        $drd_bps, $dwr_bps;
     print 'C ', join(' ', @core), "\n";
     print "P $nproc $top\n" if $top ne '';
     print "E\n";

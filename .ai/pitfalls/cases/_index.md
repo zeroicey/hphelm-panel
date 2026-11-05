@@ -20,3 +20,4 @@
 | `2026-10-21-benchmarking-cpu-under-foreign-load.md` | 在 load 23 的机器上量面板 CPU，数字全部作废；A/B 必须同窗口交替 |
 | `2026-10-21-remote-feed-hangs-without-frames.md` | 「ssh 连上了但没数据」永不重连 ⇒ 面板永久显示离线；且运行态零日志 |
 | `2026-10-21-three-column-layout-silent-misrenders.md` | 四个静默错版：相对/绝对坐标混用 · -1 兼职两种语义 · UTF-8 截断切半 · 固定高度表多算一块 |
+| `2026-11-05-offscreen-harness-all-black.md` | 离屏 harness 出图全黑：忘了 `theme_set()` ⇒ `TP` 全 0（黑底画黑字）；用红矩形做对照排除导出链路 |

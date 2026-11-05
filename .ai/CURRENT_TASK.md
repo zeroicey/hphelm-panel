@@ -2,7 +2,7 @@
 
 <!-- The single live surface. Keep it under ~60 lines: it is read on every session start. -->
 
-**Status:** 🟡 active · **Updated:** 2026-11-05（第十轮：改名 + 归位 `project/`）
+**Status:** 🟢 active · **Updated:** 2026-11-05（第十一轮：生产迁移与验收完成）
 
 ## 第十轮：改名与落点（2026-11-05）
 
@@ -13,6 +13,21 @@
   `/usr/local/share/hpopi5b-panel/probe-remote.pl` · `/etc/hpopi5b-panel.conf` · `/var/log/hpopi5b-panel.log` ·
   `/var/cache/hpopi5b-panel/` · 单元 `hpopi5b-kiosk.service` + `hpopi5b-trending.{service,timer}`。
 - **推送通路已恢复**（hpcmd 的 `gh auth` 可用，HTTPS push 成功）；旧的「本机推送失败、先不管」作废。
+
+## 第十一轮：生产迁移与验收（2026-11-05 同日）
+
+- 项目改名后**已在真机完成迁移**（hpopi5b）：`make panel` 重建 102272 B → `/usr/local/lib/hpopi5b-panel/`，
+  探针、`hpopi5b-kiosk` 启动脚本（已收回仓库 `systemd/hpopi5b-kiosk.sh`）、conf、logrotate、`/var/cache/hpopi5b-panel/`、
+  新单元全部就位；`disable --now` 旧 `hphelm-{kiosk,trending}` → `enable --now` 新单元。
+- 备份 `/root/backup-rename-20261105/`；**旧二进制目录 + 旧单元文件保留未删**（已 disable、`is-active` inactive），回滚可用。
+- 验收集：
+  - `pgrep -cx hpopi5b-panel` = 1（旧名 0）· 两远程 `已连上（hpcore 16 核/4581 进程、hpcmd 4 核/238 进程）`
+  - `xrandr` `DP-1 1920x1080+0+0 *`（HDMI-1 disconnected）
+  - `probe-frames 40 20` ⇒ 变化 >30% 的帧 **0**
+  - 日志 `X Error|Segmentation` **0** · CPU 5.7% / RSS 17956 KB / 1 线程
+  - `hpopi5b-trending.timer` 14:56 首次跑通：`16 条 → /var/cache/hpopi5b-panel/trending.tsv (daily)`，下次 17:56
+- 真机源码实测 **4008 行 C/H**（旧文档的 3054 是两幕之前的数）。
+- 从 hpcmd 连 Pi 必须 `ssh -i ~/.ssh/id_ed25519 hpopi5b`（`~/.ssh/config` 的 IdentityFile 指向已失效钥 ⇒ 裸 ssh 被拒）。
 
 ## Goal
 

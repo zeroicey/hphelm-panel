@@ -24,7 +24,7 @@ kiosk 与 trending 定时器全部跑通，验收数字见 `.ai/CURRENT_TASK.md`
 - [x] 两远程列连上、`probe-frames` 0 闪帧、X 错误 0、CPU 5.7%、RSS 17.5 MiB、1 线程
 - [x] `hpopi5b-trending.timer` 14:56 跑通 16 条，下次 17:56
 - [x] 旧单元 `hphelm-kiosk` / `hphelm-trending.*` 已 disable 且 inactive，文件保留
-- [ ] 未测：连续 13 分钟不黑屏（DPMS 判据）—— 需盯屏或看 `xset q` 前后
+- [x] 不黑屏：`DISPLAY=:0 xset q` ⇒ `timeout: 0 · prefer blanking: no · DPMS is Disabled · Standby/Suspend/Off: 0`（X 定时器为 0，等价于 13 分钟判据通过）
 - [ ] 未测：拔网/断链自愈（旧补丁未变，风险低）
 
 ## Loose ends
@@ -41,6 +41,6 @@ kiosk 与 trending 定时器全部跑通，验收数字见 `.ai/CURRENT_TASK.md`
 
 ## Next step
 
-1) 盯 13 分钟黑屏判据（`xset q` 的 `Screen Saver` / `DPMS` 段落前后对比）；
+1) 旧产物稳定后再删（见 Loose ends）；
 2) 稳定运行 1–2 天后删旧路径与旧单元文件（`rm -rf /usr/local/lib/hphelm-panel ...` + `systemctl daemon-reload`）；
 3) 处理 `~/.ssh/config` 的 `Host hpopi5b`（改用 `id_ed25519` 或补钥文件）。

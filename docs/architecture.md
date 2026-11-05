@@ -182,6 +182,21 @@ scene_trending.c  stat() 比对 mtime/size，文件变了才重读；sig 里混�
 这样做的理由和 `remote` 一样：**网络与渲染隔离**。抓取失败/超时只会让榜单停在上一份，
 面板永远不需要为 HTTP 等一秒。TSV 而不是 JSON，是为了让 C 侧零依赖（`fgets` + `\t` 切列）。
 
+**主题（白天/夜间）**
+
+```
+theme.h   语义宏 C_MAUVE/C_TEXT/… → TP.<field>（运行期可变的调色板）
+theme.c   两张 palette_t（Latte / Mocha）+ theme_night_at(t, day_min, night_min)
+panel.c   每 10s 看一次钟；到点 → 淡出(0.45s) → 换色+重画 bgpix → 淡入(0.45s)
+```
+
+三个容易踩的点：
+
+1. **`bgpix` 里烤的是渐变**，换主题必须 `bg_init()` 重画；只换宏不会动那一层。
+2. 淡变遮罩画在**后备 pixmap 上**（`cairo_paint` 全黑 + alpha），不是画在窗口上，
+   所以仍然只有「一帧一次 `XCopyArea`」上屏，不会撕裂。
+3. 主题不进 `content_sig()`：淡变期间强制失效，静下来后签名恢复去重。
+
 **统一 HUD**：`render()` 在所有幕之后画底部居中的几个小点（当前幕实心），只有轮换打开时才画。
 幕自己不画页码（右下角的页码点由 `panel.c` 统一画）。
 

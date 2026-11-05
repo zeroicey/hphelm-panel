@@ -144,6 +144,9 @@ hphelm-panel --remote2 hpcore    # 第二台真机：替换 kiosk 下左列的�
 hphelm-panel --scene panel|trending  # 钉住一幕（不轮换）
 hphelm-panel --rotate 30         # 幕轮换间隔（秒）；0 = 不轮换（kiosk 默认 30，桌面默认 0）
 hphelm-panel --transition cut|dip|push|cover    # 固定转场特效（缺省每次换一种）
+hphelm-panel --theme auto|day|night  # 主题：auto=按时刻自动切（默认）· day/night 钉住
+hphelm-panel --theme-day 07:00   # 白天起点（默认 07:00）
+hphelm-panel --theme-night 19:00 # 夜间起点（默认 19:00）
 hphelm-panel --list-scenes       # 列出可用幕后退出（不需要 X）
 hphelm-panel --dump               # 只打采集层数据后退出（不需要 X）
 HPHELM_PANEL_DEBUG=1 …            # 主循环仪表：it/s · poll 结果 · 事件类型 · 各阶段耗时
@@ -155,6 +158,15 @@ HPHELM_PANEL_DEBUG=1 …            # 主循环仪表：it/s · poll 结果 · �
 `--kiosk` 下默认每 **30 s** 换一幕、四种转场（cut/dip/push/cover）轮流用；
 桌面/锁屏模式默认**不轮换**（还是你熟悉的那个面板）。加一幕 = 新建 `src/scene_*.c`
 + 在 `scenes.c` 的表里加一行，别的不动。
+
+### 白天 / 夜间主题
+
+固定时刻自动切：**07:00 之后白天、19:00 之后夜间**（两个时刻都能改，见参数表/配置文件）。
+切换是「淡出到黑 → 换色 → 淡入」，全程 0.9 s，不会闪白也不会硬切。登录页同样跟随主题。
+
+主题**只改配色与亮度**，不碰内容：所有绘制代码用的都是语义宏（`C_MAUVE` 永远是 CPU/主色），
+色值只在 `src/theme.c` 的两张调色板里（白天 Catppuccin Latte / 夜间 Mocha）。
+所以加一幕不用写两遍配色，也不会出现「某一幕忘了换主题」。
 
 `trending` 的数据**不是 API**：GitHub 的 trending 只存在于网页里（官方没有接口），
 所以由 `tools/fetch-trending.py` 抓 `github.com/trending?since=daily` 解析成 TSV，存到
@@ -181,6 +193,7 @@ HPHELM_PANEL_DEBUG=1 …            # 主循环仪表：it/s · poll 结果 · �
 ## 目录结构
 
 ```
+src/theme.c   两套调色板 + 固定时刻判定（语义色只在 theme.h 里声明）
 src/theme.h         配色（Catppuccin Mocha）+ 版式常量（逻辑像素）
 src/metrics.[ch]    本机数据采集：只读 /proc、/sys，不 fork 子进程
 src/remote.[ch]     生产服务器采集：ssh 长连接 + 非阻塞行解析 + 退避重连

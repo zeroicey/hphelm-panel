@@ -11,27 +11,50 @@
 #define THEME_H
 
 #include <stdint.h>
+#include <time.h>
 
-/* ---- Catppuccin Mocha ---- */
-#define C_BASE      0x1e1e2e
-#define C_MANTLE    0x181825
-#define C_CRUST     0x11111b
-#define C_SURFACE0  0x313244
-#define C_SURFACE1  0x45475a
-#define C_SURFACE2  0x585b70
-#define C_TEXT      0xcdd6f4
-#define C_SUBTEXT1  0xbac2de
-#define C_SUBTEXT0  0xa6adc8
-#define C_OVERLAY1  0x7f849c
-#define C_OVERLAY0  0x6c7086
-#define C_MAUVE     0xcba6f7
-#define C_BLUE      0x89b4fa
-#define C_GREEN     0xa6e3a1
-#define C_YELLOW    0xf9e2af
-#define C_PEACH     0xfab387
-#define C_RED       0xf38ba8
-#define C_TEAL      0x94e2d5
-#define C_LAVENDER  0xb4befe
+/* ---- 主题：白天 / 夜间两套配色 ----
+ *
+ * 语义名保持不变（C_MAUVE 永远是「CPU/主色」），只是背后的色值随主题变。
+ * 所有绘制代码只读 C_* 宏 ⇒ 换主题不需要动任何版面文件。
+ * TP 由 theme_set() 在运行期整体赋值；bg0/bg1 是整屏渐变的两端。
+ */
+typedef struct {
+    uint32_t base, mantle, crust, surface0, surface1, surface2;
+    uint32_t text, subtext1, subtext0, overlay1, overlay0;
+    uint32_t mauve, blue, green, yellow, peach, red, teal, lavender;
+    uint32_t bg0, bg1;          /* 整屏渐变：bg0 在顶部，bg1 在底部 */
+} palette_t;
+
+extern palette_t TP;            /* 当前生效的主题 */
+extern const palette_t THEME_DAY, THEME_NIGHT;
+
+#define C_BASE      TP.base
+#define C_MANTLE    TP.mantle
+#define C_CRUST     TP.crust
+#define C_SURFACE0  TP.surface0
+#define C_SURFACE1  TP.surface1
+#define C_SURFACE2  TP.surface2
+#define C_TEXT      TP.text
+#define C_SUBTEXT1  TP.subtext1
+#define C_SUBTEXT0  TP.subtext0
+#define C_OVERLAY1  TP.overlay1
+#define C_OVERLAY0  TP.overlay0
+#define C_MAUVE     TP.mauve
+#define C_BLUE      TP.blue
+#define C_GREEN     TP.green
+#define C_YELLOW    TP.yellow
+#define C_PEACH     TP.peach
+#define C_RED       TP.red
+#define C_TEAL      TP.teal
+#define C_LAVENDER  TP.lavender
+#define C_BG0       TP.bg0
+#define C_BG1       TP.bg1
+
+void theme_set(int night);                       /* 立即生效（调用方负责重画背景） */
+/* 固定时刻规则：day_min 之前、night_min 之后算夜间；两个参数都是「0 点起的分钟数」 */
+int theme_night_at(time_t t, int day_min, int night_min);
+int theme_is_night(void);
 
 /* ---- 版式（逻辑像素；屏 141.8dpi ⇒ SCALE≈1.48，逻辑屏 ≈1297×729） ---- */
 #define L_MARGIN      18.0

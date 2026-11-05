@@ -32,6 +32,9 @@
  *                     [--list-scenes]  （列出幕的 id 与名字后退出）
  *                     [--state desktop|panel|login]   （测试用：强制初始状态）
  *                     [--lock PATH]                   （单实例锁路径，默认 /tmp/hphelm-panel.lock）
+ *                     [--theme auto|day|night]        （auto = 按固定时刻自动切；默认 auto）
+ *                     [--theme-day HH:MM]             （白天起点，默认 07:00）
+ *                     [--theme-night HH:MM]           （夜间起点，默认 19:00）
  */
 #define _GNU_SOURCE
 #include <X11/XKBlib.h>
@@ -91,7 +94,18 @@ static char CFG_REMOTE2[64] = ""; /* 左列第二台远程机（--remote2；空 
 static double CFG_ROTATE = -1;
 static char CFG_SCENE[32] = "";    /* 钉住某一幕（--scene）；空 = 从 panel 开始轮换 */
 static int CFG_TRANS = -1;          /* -1 = 每次自动换一种特效；>=0 = 固定 */
-static char CFG_TRENDING[256];      /* GitHub 趋势缓存文件（trending=）；空 = 用 scene 默认路径 */
+static char CFG_TRENDING[256];
+static int CFG_THEME = -1;             /* -1 自动（按时刻）· 0 白天 · 1 夜间 */
+static int CFG_THEME_DAY = 7 * 60;     /* 白天起点（分钟） */
+static int CFG_THEME_NIGHT = 19 * 60;  /* 夜间起点（分钟） */
+
+static int theme_night;                /* 当前生效的主题 */
+static int theme_fade;                 /* 1 = 正在「淡出→换色→淡入」 */
+static double theme_fade_t0;
+static int theme_fade_pending, theme_fade_swapped;
+static double theme_check_at;
+#define THEME_FADE 0.45                /* 单向淡变时长（半程换色） */
+      /* GitHub 趋势缓存文件（trending=）；空 = 用 scene 默认路径 */
 static int DBG = 0;               /* HPHELM_PANEL_DEBUG=1：每秒打印主循环仪表 */
 static long dbg_iter, dbg_ev, dbg_poll_rd, dbg_poll_to, dbg_poll_oth, dbg_redraw, dbg_sample;
 static long dbg_remote_frames;
@@ -101,6 +115,14 @@ static double dbg_ms_render, dbg_ms_blit, dbg_ms_sig;
 static const char *CFG_LOCK = "/tmp/hphelm-panel.lock";  /* 单实例锁（--lock 可换，便于 Xvfb 并行测试） */
 
 /* 读配置文件里的 remote=（找不到文件就静默跳过） */
+/* "07:30" → 450（分钟）；格式不对返回 -1 */
+static int parse_hhmm(const char *s) {
+    int h = -1, m = -1;
+    if (sscanf(s, "%d:%d", &h, &m) != 2) return -1;
+    if (h < 0 || h > 23 || m < 0 || m > 59) return -1;
+    return h * 60 + m;
+}
+
 static void read_conf_file(void) {
     FILE *f = fopen(CFG_FILE, "r");
     if (!f) return;
@@ -144,6 +166,28 @@ static void read_conf_file(void) {
             v[strcspn(v, " \t\r\n")] = 0;
             int fx = scene_fx_by_name(v);
             if (fx >= 0) CFG_TRANS = fx;
+            continue;
+        }
+        if (strncmp(p, "theme=", 6) == 0) {
+            char *v = p + 6;
+            v[strcspn(v, " \t\r\n")] = 0;
+            if (!strcmp(v, "day")) CFG_THEME = 0;
+            else if (!strcmp(v, "night")) CFG_THEME = 1;
+            else if (!strcmp(v, "auto")) CFG_THEME = -1;
+            continue;
+        }
+        if (strncmp(p, "theme_day=", 10) == 0) {
+            char *v = p + 10;
+            v[strcspn(v, " \t\r\n")] = 0;
+            int m = parse_hhmm(v);
+            if (m >= 0) CFG_THEME_DAY = m;
+            continue;
+        }
+        if (strncmp(p, "theme_night=", 12) == 0) {
+            char *v = p + 12;
+            v[strcspn(v, " \t\r\n")] = 0;
+            int m = parse_hhmm(v);
+            if (m >= 0) CFG_THEME_NIGHT = m;
             continue;
         }
         if (strncmp(p, "trending=", 9) == 0 && !CFG_TRENDING[0]) {
@@ -264,6 +308,29 @@ static void bg_init(void) {
     cairo_destroy(bcr);
     cairo_surface_flush(bs);
     cairo_surface_destroy(bs);
+}
+
+/* 换主题 = 换调色板 + 重画一次整屏渐变（bgpix）+ 让签名失效。
+   ⚠️ 必须重画 bgpix：它里面烤的是旧主题的渐变，只换宏不会变。 */
+static void theme_apply(int night) {
+    theme_night = night ? 1 : 0;
+    theme_set(theme_night);
+    if (dpy) bg_init();
+    g_sig_valid = 0;
+    logf_("主题：%s", theme_night ? "夜间" : "白天");
+}
+
+/* 淡变遮罩：前半程 0→1（淡出到黑），中途换色，后半程 1→0（淡入） */
+static void theme_fade_paint(cairo_t *c) {
+    if (!theme_fade) return;
+    double t = now_s() - theme_fade_t0;
+    double a = t < THEME_FADE ? t / THEME_FADE : 1.0 - (t - THEME_FADE) / THEME_FADE;
+    if (a < 0) a = 0;
+    if (a > 1) a = 1;
+    cairo_save(c);
+    cairo_set_source_rgba(c, 0, 0, 0, a);
+    cairo_paint(c);
+    cairo_restore(c);
 }
 
 static void surface_init(void) {
@@ -501,6 +568,7 @@ static void render(void) {
         cairo_scale(cr, SCALE, SCALE);
         draw_hud(cr);
         cairo_restore(cr);
+        theme_fade_paint(cr);
         cairo_surface_flush(surf);
         return;
     }
@@ -517,6 +585,7 @@ static void render(void) {
     if (wait < 0) wait = 0;
     view_login_draw(cr, &v, &M, g_user, pwlen, g_err, busy, cursor_on, wait);
     cairo_restore(cr);
+    theme_fade_paint(cr);
 }
 
 /* 后备缓冲 → 窗口：整屏一次 XCopyArea（服务器端 blit，不上传像素） */
@@ -528,6 +597,7 @@ static void blit(void) {
 
 static void redraw(void) {
     if (state == ST_DESKTOP) return;
+    if (theme_fade) g_sig_valid = 0;   /* 淡变期间每帧都要重画（遮罩透明度在变） */
     double t0 = now_s();
     unsigned long long s = content_sig();
     double t1 = now_s();
@@ -724,6 +794,20 @@ int main(int argc, char **argv) {
                 return 2;
             }
             CFG_TRANS = fx;
+        } else if (!strcmp(argv[i], "--theme") && i + 1 < argc) {
+            const char *v = argv[++i];
+            if (!strcmp(v, "day")) CFG_THEME = 0;
+            else if (!strcmp(v, "night")) CFG_THEME = 1;
+            else if (!strcmp(v, "auto")) CFG_THEME = -1;
+            else { fprintf(stderr, "未知主题：%s（auto|day|night）\n", v); return 2; }
+        } else if (!strcmp(argv[i], "--theme-day") && i + 1 < argc) {
+            int m = parse_hhmm(argv[++i]);
+            if (m < 0) { fprintf(stderr, "时间格式应为 HH:MM\n"); return 2; }
+            CFG_THEME_DAY = m;
+        } else if (!strcmp(argv[i], "--theme-night") && i + 1 < argc) {
+            int m = parse_hhmm(argv[++i]);
+            if (m < 0) { fprintf(stderr, "时间格式应为 HH:MM\n"); return 2; }
+            CFG_THEME_NIGHT = m;
         } else if (!strcmp(argv[i], "--list-scenes")) {
             for (int k = 0; k < scenes_count(); k++)
                 printf("%s\t%s\n", scene_at(k)->id, scene_at(k)->label);
@@ -821,6 +905,12 @@ int main(int argc, char **argv) {
         }
     }
 
+    /* 主题：TP 必须在第一次 v_bg 之前就位（surface_init → bg_init 会烤渐变） */
+    theme_night = CFG_THEME >= 0 ? CFG_THEME
+                                 : theme_night_at(time(NULL), CFG_THEME_DAY, CFG_THEME_NIGHT);
+    theme_set(theme_night);
+    theme_check_at = now_s() + 10.0;
+
     dpy = XOpenDisplay(NULL);
     if (!dpy) {
         fprintf(stderr, "hphelm-panel: 无法打开 X display（DISPLAY=%s）\n",
@@ -872,6 +962,9 @@ int main(int argc, char **argv) {
           "sleep_off=%s · scale=%.2f · %dx%d",
           state_name(state), CFG_PANEL_IDLE, CFG_LOGIN_BACK, CFG_INPUT_GRACE, so,
           SCALE, SW, SH);
+    logf_("主题：%s · %s（白天 %02d:%02d · 夜间 %02d:%02d）", theme_night ? "夜间" : "白天",
+          CFG_THEME >= 0 ? "钉住" : "自动切换", CFG_THEME_DAY / 60, CFG_THEME_DAY % 60,
+          CFG_THEME_NIGHT / 60, CFG_THEME_NIGHT % 60);
     if (state != ST_DESKTOP) win_show();
 
     /* ⭐ 启动自愈：本程序的 screen_off 只反映「自己发过什么」，不反映真实 DPMS 状态。
@@ -997,8 +1090,41 @@ int main(int argc, char **argv) {
         /* --- 幕轮换 / 转场推进（返回 1 = 需要一帧，签名里已含进度） --- */
         if (state == ST_PANEL) (void)scenes_tick(now_s());
 
+        /* --- 主题：固定时刻切换，先淡出到黑、换色、再淡入 ---
+           每 10s 看一眼钟（自动模式下）；淡变全长 2×0.45s，期间每帧重画。 */
+        if (CFG_THEME < 0) {
+            double nw = now_s();
+            if (!theme_fade && nw >= theme_check_at) {
+                theme_check_at = nw + 10.0;
+                int want = theme_night_at(time(NULL), CFG_THEME_DAY, CFG_THEME_NIGHT);
+                if (want != theme_night) {
+                    if (state == ST_DESKTOP) {
+                        theme_apply(want);          /* 没人看，直接换 */
+                    } else {
+                        theme_fade = 1;
+                        theme_fade_t0 = nw;
+                        theme_fade_pending = want;
+                        theme_fade_swapped = 0;
+                    }
+                }
+            }
+            if (theme_fade) {
+                double t = now_s() - theme_fade_t0;
+                if (!theme_fade_swapped && t >= THEME_FADE) {
+                    theme_fade_swapped = 1;
+                    theme_apply(theme_fade_pending);  /* 全黑那一刻换色 + 重画 bgpix */
+                }
+                if (t >= THEME_FADE * 2.0) {
+                    theme_fade = 0;
+                    theme_fade_swapped = 0;
+                    g_sig_valid = 0;
+                }
+            }
+        }
+
         /* --- 重绘（面板 1Hz；登录页只闪光标） --- */
-        if (state == ST_PANEL) {
+        if (theme_fade) redraw_force();
+        else if (state == ST_PANEL) {
             redraw();
         } else if (state == ST_LOGIN) {
             int c = ((int)(now_s() * 2)) % 2;
@@ -1039,6 +1165,7 @@ int main(int argc, char **argv) {
         int timeout = state == ST_DESKTOP ? 1000 : 500;
         /* 转场要 30ms 一帧（~33fps，0.55s 共 ~18 帧）；平时仍 500ms 一次 */
         if (scenes_transitioning()) timeout = 30;
+        if (theme_fade) timeout = 25;   /* 淡变 ~40fps：够顺，又不至于把 CPU 顶起来 */
         int pr = poll(p, (unsigned)nfd, timeout);
         if (DBG) {
             if (pr == 0) dbg_poll_to++;

@@ -76,6 +76,18 @@
 - ⚠️ **跨机 tar 同步会让 make 误判「已最新」**：tar 保留 hpcmd 的 mtime（UTC），Pi 是 CST，看起来像 6 小时前。
   同步源码后一律 `make -B panel`（或用 `install -m` / `touch`）。
 
+**追加（同日）：白天/夜间主题**
+
+- `theme.h` 从「一堆 #define 色值」改成**语义宏 → 运行时调色板 `TP`**（`C_MAUVE` 仍是 `TP.mauve`），
+  所有版面文件一行没改就跟着换色；色值集中到 `src/theme.c`：夜间 Mocha（原样）、白天 Latte。
+- 固定时刻：`theme_night_at(now, 07:00, 19:00)`，每 10 s 看一次钟；跨零点区间也支持。
+- 切换：淡出 0.45 s → 全黑时 `theme_apply()`（换 TP + **重画 bgpix**）→ 淡入 0.45 s；
+  遮罩画在后备 pixmap 上，上屏仍是单次 `XCopyArea`；淡变期间 poll 25 ms。
+- 坑：`bgpix` 里是烤好的渐变，只换宏不重画 ⇒ 必须 `bg_init()`（theme_apply 里做了）。
+- 验证：panel/trending × day/night 四张离屏实拍；自动切换用 `--theme-day/--theme-night` 设到下一分钟，
+  40 ms 采一次平均亮度：白天 237 → 谷底 5.7 → 夜间 21.5，日志 `主题：夜间` 正好在边界；
+  反向（夜间→白天）同样通过。真机重启后 `主题：白天`，`probe-frames` 0 帧 >30%。
+
 **下一轮**：让 `tools/deploy.sh` 认出 hpopi5b（路径/服务名 + 安装 `fetch-trending.py` 与 timer），并把 `--rotate` 写进 `/etc/hphelm-panel.conf`
 （当前靠 kiosk 默认 30 s）；按肉眼感受决定 25/30/45。
 

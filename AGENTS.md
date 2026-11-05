@@ -135,7 +135,7 @@ python3 tools/measure.py assets/panel.png --runs 240 --bands
 - **曲线**：量程用 `v_nice_ceil()` 吸附到 1/2/5×10ⁿ；CPU/内存固定 0~100。
   ⛔ **不要用「当前值」预填曲线**（等于伪造历史，还会把量程顶上去压扁真数据）——
   空态用「零基线 + 诚实生长」表达。
-- **配色**：Catppuccin Mocha，语义色别乱用（mauve=CPU/主色、blue=内存、green=网络/正常、
+- **配色**：白天 Latte / 夜间 Mocha，**只走 `theme.h` 的语义宏**（别在 `view_*.c` 里写死色值，否则该幕不会跟随主题）；语义色别乱用（mauve=CPU/主色、blue=内存、green=网络/正常、
   yellow=进程/警告、red=危险、teal/peach=下行/上行）。
 
 ---
@@ -144,7 +144,8 @@ python3 tools/measure.py assets/panel.png --runs 240 --bands
 
 | 文件 | 作用 | 改它的频率 |
 | --- | --- | --- |
-| `src/theme.h` | 配色 + 版式常量（逻辑像素）+ 字号 | ⭐ 最常动 |
+| `src/theme.h` | 语义色宏 + 版式常量（逻辑像素）+ 字号 | ⭐ 最常动 |
+| `src/theme.c` | 白天/夜间两套调色板 + 固定时刻判定 | ⭐ 加主题只动这里 |
 | `src/view_panel.c` | 面板版面（三栏 + 进程榜） | ⭐⭐ 改面板只动这里 |
 | `src/scene.h` · `src/scenes.c` | 幕的接口（draw + 自身内容签名）与轮换/转场调度 | ⭐ 改调度只动这里 |
 | `src/scene_*.c` | 两个幕：panel / trending（两列榜单） | ⭐⭐ 加幕就新建一个文件 |

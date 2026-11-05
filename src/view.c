@@ -208,8 +208,10 @@ void v_round_rect(cairo_t *cr, double x, double y, double w, double h, double r)
 /* 整屏渐变底：面板与登录页共用（原来面板是平涂、登录页是渐变，观感不统一） */
 void v_bg(cairo_t *cr, double w, double h) {
     cairo_pattern_t *g = cairo_pattern_create_linear(0, 0, 0, h);
-    cairo_pattern_add_color_stop_rgb(g, 0.0, 0.043, 0.071, 0.125);
-    cairo_pattern_add_color_stop_rgb(g, 1.0, 0.008, 0.012, 0.024);
+    cairo_pattern_add_color_stop_rgb(g, 0.0, ((C_BG0 >> 16) & 0xff) / 255.0,
+                                     ((C_BG0 >> 8) & 0xff) / 255.0, (C_BG0 & 0xff) / 255.0);
+    cairo_pattern_add_color_stop_rgb(g, 1.0, ((C_BG1 >> 16) & 0xff) / 255.0,
+                                     ((C_BG1 >> 8) & 0xff) / 255.0, (C_BG1 & 0xff) / 255.0);
     cairo_set_source(cr, g);
     cairo_rectangle(cr, 0, 0, w, h);
     cairo_fill(cr);

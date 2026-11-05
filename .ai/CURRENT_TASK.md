@@ -21,6 +21,8 @@
 - [x] 真机 enabled，列表/涨星/总数/HUD 实拍确认
 - [x] trending 两列 12 条 + 描述 13pt / 仓库名 14pt（`F_DESC`），离屏与真机都看过
 - [x] 撤幕：删除 scene_hero/clock/ambient，`--scene` 只剩 panel|trending
+- [x] 白天/夜间主题（07:00/19:00 自动切，淡出→换色→淡入 0.9s；`theme=`/`theme_day=`/`theme_night=` + `--theme*`）
+- [x] 两幕 × 两主题离屏与真机实拍；自动切换用近时刻实测亮度曲线（237→6→21）
 - [x] 真机构建 + `probe-frames`（>30% 变化帧=0）+ CPU 口径
 - [x] 转场视觉实测（push 中间帧确认；四特效无 X 错误）
 - [ ] 定 `--rotate` 最终值（候选 25/30/45）并写进 `/etc/hphelm-panel.conf`

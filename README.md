@@ -141,7 +141,7 @@ hphelm-panel --lock /tmp/x.lock   # 单实例锁路径（默认 /tmp/hphelm-pane
 hphelm-panel --state panel|login  # 强制初始状态（验证界面用）
 hphelm-panel --kiosk             # 纯显示器：永不进登录页/桌面（Pi 看板用）
 hphelm-panel --remote2 hpcore    # 第二台真机：替换 kiosk 下左列的「本机」
-hphelm-panel --scene panel|hero|clock|ambient  # 钉住一幕（不轮换）
+hphelm-panel --scene panel|trending  # 钉住一幕（不轮换）
 hphelm-panel --rotate 30         # 幕轮换间隔（秒）；0 = 不轮换（kiosk 默认 30，桌面默认 0）
 hphelm-panel --transition cut|dip|push|cover    # 固定转场特效（缺省每次换一种）
 hphelm-panel --list-scenes       # 列出可用幕后退出（不需要 X）
@@ -151,9 +151,10 @@ HPHELM_PANEL_DEBUG=1 …            # 主循环仪表：it/s · poll 结果 · �
 
 ### 多幕（一块屏不只显示一种东西）
 
-面板是**幕**的一个实现：`panel`（三列密排）· `hero`（远看大字）· `trending`（GitHub 趋势）·
-`clock`（钟/日期）· `ambient`（近黑环境）。`--kiosk` 下默认每 **30 s** 换一幕、四种转场（cut/dip/push/cover）
-轮流用；桌面/锁屏模式默认**不轮换**（还是你熟悉的那个面板）。
+面板是**幕**的一个实现，目前两幕：`panel`（三列密排）· `trending`（GitHub 趋势，**两列 12 条**）。
+`--kiosk` 下默认每 **30 s** 换一幕、四种转场（cut/dip/push/cover）轮流用；
+桌面/锁屏模式默认**不轮换**（还是你熟悉的那个面板）。加一幕 = 新建 `src/scene_*.c`
++ 在 `scenes.c` 的表里加一行，别的不动。
 
 `trending` 的数据**不是 API**：GitHub 的 trending 只存在于网页里（官方没有接口），
 所以由 `tools/fetch-trending.py` 抓 `github.com/trending?since=daily` 解析成 TSV，存到
@@ -189,9 +190,6 @@ src/view_login.c    登录页版面（无卡片、居中）
 src/scene.h         幕的接口：draw + 自己的内容签名（不碰 X）
 src/scenes.c        幕的注册表 + 轮换调度 + 转场推进（纯逻辑）
 src/scene_panel.c   幕「运维面板」（转调 view_panel.c）
-src/scene_hero.c    幕「远看版」（两行主机 × 四个巨大数字）
-src/scene_clock.c   幕「钟与日期」（200pt 级 HH:MM + 分钟进度线）
-src/scene_ambient.c 幕「环境」（几乎全暗，一分钟重画一次）
 src/scene_trending.c 幕「GitHub 趋势」（只读缓存 TSV，缺文件时给空态）
 tools/fetch-trending.py GitHub Trending 抓取器（无依赖，python3）
 systemd/        hphelm-trending.{service,timer}（每 3 小时同步一次榜单）

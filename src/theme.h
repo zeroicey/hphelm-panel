@@ -84,6 +84,7 @@
 #define F_TITLE  "JetBrainsMono Nerd Font 11"
 #define F_LABEL  "JetBrainsMono Nerd Font 10"
 #define F_SMALL  "JetBrainsMono Nerd Font 9"
+#define F_DESC   "JetBrainsMono Nerd Font 13"  /* 榜单描述：要比 label 大、又不能抢过 repo */
 #define F_PROC   "JetBrainsMono Nerd Font 14"
 #define F_VALUE  "JetBrainsMono Nerd Font 17"
 #define F_BIG    "JetBrainsMono Nerd Font 26"

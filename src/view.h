@@ -38,6 +38,7 @@ void view_init(PangoLayout *lay);
 PangoFontDescription *v_fd_title(void);
 PangoFontDescription *v_fd_label(void);
 PangoFontDescription *v_fd_small(void);
+PangoFontDescription *v_fd_desc(void);
 PangoFontDescription *v_fd_proc(void);
 PangoFontDescription *v_fd_value(void);
 PangoFontDescription *v_fd_big(void);

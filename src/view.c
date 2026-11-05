@@ -12,7 +12,7 @@
 #include "theme.h"
 
 static PangoLayout *g_lay;
-static PangoFontDescription *FD_TITLE, *FD_LABEL, *FD_SMALL, *FD_PROC, *FD_VALUE, *FD_BIG,
+static PangoFontDescription *FD_TITLE, *FD_LABEL, *FD_SMALL, *FD_DESC, *FD_PROC, *FD_VALUE, *FD_BIG,
     *FD_HUGE;
 
 static PangoFontDescription *mk(const char *s) { return pango_font_description_from_string(s); }
@@ -23,6 +23,7 @@ void view_init(PangoLayout *lay) {
     FD_TITLE = mk(F_TITLE);
     FD_LABEL = mk(F_LABEL);
     FD_SMALL = mk(F_SMALL);
+    FD_DESC = mk(F_DESC);
     FD_PROC = mk(F_PROC);
     FD_VALUE = mk(F_VALUE);
     FD_BIG = mk(F_BIG);
@@ -32,6 +33,7 @@ void view_init(PangoLayout *lay) {
 PangoFontDescription *v_fd_title(void) { return FD_TITLE; }
 PangoFontDescription *v_fd_label(void) { return FD_LABEL; }
 PangoFontDescription *v_fd_small(void) { return FD_SMALL; }
+PangoFontDescription *v_fd_desc(void) { return FD_DESC; }
 PangoFontDescription *v_fd_proc(void) { return FD_PROC; }
 PangoFontDescription *v_fd_value(void) { return FD_VALUE; }
 PangoFontDescription *v_fd_big(void) { return FD_BIG; }

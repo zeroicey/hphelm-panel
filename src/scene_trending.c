@@ -16,7 +16,7 @@
 #include "scene.h"
 
 #define TR_MAX 16
-#define TR_SHOW 8
+#define TR_SHOW 12  /* 两列 × 6 行 */
 
 typedef struct {
     char name[80];
@@ -36,9 +36,9 @@ static PangoFontDescription *FD_REPO, *FD_TODAY, *FD_DESC, *FD_RANK, *FD_HEAD;
 
 static void init_fonts(void) {
     if (FD_REPO) return;
-    FD_REPO = v_fd_value();
-    FD_TODAY = v_fd_proc();
-    FD_DESC = v_fd_label();
+    FD_REPO = v_fd_proc();   /* 仓库名：比描述小一号，别喧宾夺主 */
+    FD_TODAY = v_fd_label();
+    FD_DESC = v_fd_desc();   /* 描述 13pt：两列后仍有足够空间 */
     FD_RANK = v_fd_small();
     FD_HEAD = v_fd_title();
 }
@@ -56,12 +56,14 @@ static void fit(char *out, size_t outn, PangoFontDescription *fd, const char *s,
     }
     int n = (int)strlen(s);
     int lo = 0, hi = n;
+    double budget = maxw - v_text_w(fd, "…");
     while (lo < hi) {
         int mid = (lo + hi + 1) / 2;
-        while (mid > 0 && ((unsigned char)s[mid] & 0xC0) == 0x80) mid--;
+        while (mid > lo && ((unsigned char)s[mid] & 0xC0) == 0x80) mid--;
+        if (mid == lo) break; /* 多字节字符：再缩就退不回去了，到此为止 */
         char tmp[512];
         snprintf(tmp, sizeof tmp, "%.*s", mid, s);
-        if (v_text_w(fd, tmp) <= maxw - v_text_w(fd, "…")) lo = mid; else hi = mid - 1;
+        if (v_text_w(fd, tmp) <= budget) lo = mid; else hi = mid - 1;
     }
     while (lo > 0 && ((unsigned char)s[lo] & 0xC0) == 0x80) lo--;
     snprintf(out, outn, "%.*s…", lo, s);
@@ -135,8 +137,11 @@ static void draw(cairo_t *cr, const view_ctx_t *v, const scene_env_t *e) {
     }
 
     int n = nrows < TR_SHOW ? nrows : TR_SHOW;
-    double y0 = L_BODY_Y + 8;
-    double rh = (v->lh - 34 - y0) / n;
+    const double gap = L_COL_GAP;
+    const double cw = (mw - gap) / 2;
+    const double y0 = L_BODY_Y + 10;
+    const int percol = 6;
+    const double rh = (v->lh - 26 - y0) / percol;
 
     char head[64];
     long age = (long)(time(NULL) - lst.st_mtime);
@@ -147,29 +152,37 @@ static void draw(cairo_t *cr, const view_ctx_t *v, const scene_env_t *e) {
 
     for (int i = 0; i < n; i++) {
         tr_row_t *r = &rows[i];
-        double y = y0 + i * rh;
-        double base = y + rh * 0.42;
+        int col = i / percol, row = i % percol;
+        double cx = mx + col * (cw + gap);
+        double y = y0 + row * rh;
+        double base = y + 34;
 
-        v_text(cr, mx, base, FD_RANK, C_OVERLAY0, "%02d", i + 1);
-
-        char name[96];
-        fit(name, sizeof name, FD_REPO, r->name, mw * 0.38);
-        v_text(cr, mx + 40, base, FD_REPO, C_TEXT, "%s", name);
-
-        if (r->lang[0]) {
-            v_text(cr, mx + mw * 0.40, base, FD_DESC, C_SUBTEXT0, "%s", r->lang);
-        }
-        v_text_right(cr, mx + mw * 0.86, base, FD_TODAY, C_YELLOW, "%s/日", r->today);
+        v_text(cr, cx, base, FD_RANK, C_OVERLAY0, "%02d", i + 1);
 
         char tot[24];
         fmt_total(r->total, tot, sizeof tot);
-        v_text_right(cr, v->lw - mx, base, FD_DESC, C_OVERLAY0, "%s★", tot);
+        char today[40];
+        snprintf(today, sizeof today, "%s/日", r->today);
 
+        /* 第一行：仓库名（截断到「语言 + 涨星」之前） + 语言 + 今日涨星 */
+        double today_w = v_text_w(FD_TODAY, today) + 12;
+        double lang_w = r->lang[0] ? v_text_w(FD_DESC, r->lang) + 14 : 0;
+        double name_max = cw - 30 - today_w - lang_w;
+        char name[96];
+        fit(name, sizeof name, FD_REPO, r->name, name_max);
+        v_text(cr, cx + 30, base, FD_REPO, C_TEXT, "%s", name);
+        if (r->lang[0])
+            v_text_right(cr, cx + cw - today_w, base, FD_DESC, C_SUBTEXT1, "%s", r->lang);
+        v_text_right(cr, cx + cw, base, FD_TODAY, C_YELLOW, "%s", today);
+
+        /* 第二行：描述（13pt）+ 总星（小字靠右） */
+        double tot_w = v_text_w(FD_RANK, tot) + 22;
         char desc[300];
-        fit(desc, sizeof desc, FD_DESC, r->desc, mw - 40);
-        v_text(cr, mx + 40, base + rh * 0.40, FD_DESC, C_OVERLAY0, "%s", desc);
+        fit(desc, sizeof desc, FD_DESC, r->desc, cw - 30 - tot_w);
+        v_text(cr, cx + 30, base + 36, FD_DESC, C_SUBTEXT0, "%s", desc);
+        v_text_right(cr, cx + cw, base + 36, FD_RANK, C_OVERLAY0, "%s★", tot);
 
-        if (i + 1 < n) v_rule(cr, mx, y + rh - 3, mw);
+        if (row + 1 < percol && i + 1 < n) v_rule(cr, cx, y + rh - 4, cw);
     }
 }
 

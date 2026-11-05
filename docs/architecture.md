@@ -148,8 +148,8 @@ typedef struct {
 - `draw` 收到**已经 `cairo_scale` 过的**上下文，底图（`bgpix`）也已经 `XCopyArea` 到目标缓冲上；
   幕只画自己的内容，不铺底、不碰 X。
 - `sig` 是**幕自己的内容签名**，与 `panel.c` 里原有的 `content_sig()` 相与。`panel` 幕哈希
-  `metrics_t`（1 Hz 变化）；`clock` 幕哈希墙钟秒（1 Hz）；`ambient` 幕哈希「分钟」——它一分钟
-  才重画一次，这是刻意的（见 `scene_ambient.c` 顶部注释）。
+  `metrics_t`（1 Hz 变化）；`trending` 幕哈希「分钟」（「N 分钟前同步」要跟着走）——缓存文件没变时
+  一分钟才重画一次，省电也避免无意义刷新。
 - 调度只有**一个数**：`--rotate S`（默认 kiosk 30s、桌面/锁屏 0=不轮换）。不搞每幕不同停留。
   已经出现「信息密度差很多」的幕时，再给 `scene_t` 加 `dwell` 字段 —— 现在不要提前设计。
 
@@ -183,7 +183,7 @@ scene_trending.c  stat() 比对 mtime/size，文件变了才重读；sig 里混�
 面板永远不需要为 HTTP 等一秒。TSV 而不是 JSON，是为了让 C 侧零依赖（`fgets` + `\t` 切列）。
 
 **统一 HUD**：`render()` 在所有幕之后画底部居中的几个小点（当前幕实心），只有轮换打开时才画。
-幕自己不画页码（`clock` 幕底部那句「下一幕 · Ns」是幕自己的信息，不是 HUD）。
+幕自己不画页码（右下角的页码点由 `panel.c` 统一画）。
 
 ## 三、采样：为什么一切都按「时间」节流
 

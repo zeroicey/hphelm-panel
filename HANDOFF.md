@@ -65,6 +65,17 @@
 - 真机：timer 已 enable，首次抓取 16 条；转场轮到第 3 幕时实拍确认列表/涨星/总数/HUD 全部正确。
 - 踩到：`atol("313,652")` 在逗号处停下 ⇒ 总数全变成「313★」。**千分位字符串不要直接 atol**。
 
+**追加（同日）：只留两幕 + trending 两列**
+
+- 用户裁决：hero/clock/ambient 「撤掉」，只保留 panel + trending（文件已删，git 历史仍可找回）。
+  幕表从 5 项降到 2 项，`--list-scenes` / README / AGENTS / architecture 同步。
+- trending 改版：**两列 × 6 行 = 12 条**（列宽 `(mw-L_COL_GAP)/2`），仓库名 14pt、描述 **13pt**（新增
+  `F_DESC`/`v_fd_desc()`）、语言与「N/日」右对齐在第一行、总星小字落在描述行右端。
+- 修 `fit()` 在多字节字符处**死循环**（`mid` 退到 `lo` 后不再前进）：加 `mid == lo` 退出。真机 100% CPU 才暴露。
+- 真机判据：0 闪帧、服务单实例、日志无 X 错误；实拍 trending 列表 12 条两列 + HUD 两点（第 2 点高亮）。
+- ⚠️ **跨机 tar 同步会让 make 误判「已最新」**：tar 保留 hpcmd 的 mtime（UTC），Pi 是 CST，看起来像 6 小时前。
+  同步源码后一律 `make -B panel`（或用 `install -m` / `touch`）。
+
 **下一轮**：让 `tools/deploy.sh` 认出 hpopi5b（路径/服务名 + 安装 `fetch-trending.py` 与 timer），并把 `--rotate` 写进 `/etc/hphelm-panel.conf`
 （当前靠 kiosk 默认 30 s）；按肉眼感受决定 25/30/45。
 

@@ -6,20 +6,21 @@
 
 ## Goal
 
-把面板从「一个写死的版面」改成**可插拔的多幕（scene）**：`panel` / `hero` / `clock` /
-`ambient`，kiosk 下默认 30 s 轮换 + 四种转场。桌面/锁屏模式默认不轮换（仍是原面板）。
-**已上真机**（hpopi5b，2026-11-05）：四幕出图、轮换在跑、0 闪帧、CPU 4.40%（旧 4.46%）、RSS 18.2 MiB。
+把面板从「一个写死的版面」改成**可插拔的多幕（scene）**，目前**只保留两幕**：`panel`（运维面板）+
+`trending`（GitHub 趋势，两列 12 条），kiosk 下默认 30 s 轮换 + 四种转场。桌面/锁屏模式默认不轮换。
+**已上真机**（hpopi5b，2026-11-05）：两幕轮换在跑、0 闪帧、trending 两列实拍确认、HUD 两点。
 
 ## Checklist（第九轮）
 
 - [x] `src/scene.h` + `src/scenes.c`（注册表/轮换/转场/内容签名）
-- [x] 四幕：panel / hero / clock / ambient
+- [x] 两幕：panel / trending（hero/clock/ambient 已按用户要求撤掉）
 - [x] `panel.c` 接幕（render/签名/poll 30 ms/懒分配 altpix/HUD）
 - [x] `--scene --rotate --transition --list-scenes` + 配置文件键
 - [x] `v_text_h()`：版式不再拿字号猜行高
 - [x] `trending` 幕 + `tools/fetch-trending.py` + `hphelm-trending.timer`（3h）
 - [x] 真机 enabled，列表/涨星/总数/HUD 实拍确认
-- [x] 离屏渲染四张 PNG 逐张看过（修掉两处重叠）
+- [x] trending 两列 12 条 + 描述 13pt / 仓库名 14pt（`F_DESC`），离屏与真机都看过
+- [x] 撤幕：删除 scene_hero/clock/ambient，`--scene` 只剩 panel|trending
 - [x] 真机构建 + `probe-frames`（>30% 变化帧=0）+ CPU 口径
 - [x] 转场视觉实测（push 中间帧确认；四特效无 X 错误）
 - [ ] 定 `--rotate` 最终值（候选 25/30/45）并写进 `/etc/hphelm-panel.conf`
@@ -75,6 +76,6 @@
 
 ## Next action
 
-先决定 CPU 这一项怎么收：**（a）接受 1.0~1.4% 并改文档预算**（面板已经比 conky 便宜得多），
+（上一轮遗留）先决定 CPU 这一项怎么收：**（a）接受 1.0~1.4% 并改文档预算**（面板已经比 conky 便宜得多），
 或**（b）做区域局部重绘**（只重画时钟/数字所在的行，预计能砍掉一半）。
 动手前先在**空闲的机器上**（`uptime` 的 load < nproc/2）量一次基线，把数字记进 HANDOFF。

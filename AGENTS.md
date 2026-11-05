@@ -147,7 +147,7 @@ python3 tools/measure.py assets/panel.png --runs 240 --bands
 | `src/theme.h` | 配色 + 版式常量（逻辑像素）+ 字号 | ⭐ 最常动 |
 | `src/view_panel.c` | 面板版面（三栏 + 进程榜） | ⭐⭐ 改面板只动这里 |
 | `src/scene.h` · `src/scenes.c` | 幕的接口（draw + 自身内容签名）与轮换/转场调度 | ⭐ 改调度只动这里 |
-| `src/scene_*.c` | 四个幕：panel / hero / clock / ambient | ⭐⭐ 加幕就新建一个文件 |
+| `src/scene_*.c` | 两个幕：panel / trending（两列榜单） | ⭐⭐ 加幕就新建一个文件 |
 | `src/view_login.c` | 登录页版面 | ⭐ 改登录页时 |
 | `src/view.c` | 绘制基元（文字/渐变/细线/条/每核柱/sparkline/量程） | 偶尔 |
 | `src/metrics.c` | **本机**数据采集（`/proc`、`/sys`，不 fork） | 加指标时 |

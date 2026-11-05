@@ -84,10 +84,7 @@ int scenes_rotating(void);
 
 /* 各幕（定义在 scene_*.c；scenes.c 只负责把它们排成一张表） */
 extern const scene_t SCENE_PANEL;
-extern const scene_t SCENE_HERO;
-extern const scene_t SCENE_CLOCK;
 extern const scene_t SCENE_TRENDING;
-extern const scene_t SCENE_AMBIENT;
 
 /* trending 幕的缓存文件（默认 /var/cache/hphelm-panel/trending.tsv） */
 void scene_trending_file(const char *path);

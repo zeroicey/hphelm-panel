@@ -63,6 +63,34 @@ double v_text_h(PangoFontDescription *fd, const char *s) {
     return (double)r.height / PANGO_SCALE;
 }
 
+/* 多行文本：按宽度自动折行、最多 maxlines 行、超出加省略号。
+ * 返回实际高度（逻辑像素）。左上角对齐 (x,y)。 */
+double v_text_wrap(cairo_t *cr, double x, double y, PangoFontDescription *fd, uint32_t rgb,
+                   double maxw, int maxlines, const char *fmt, ...) {
+    char buf[1024];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(buf, sizeof buf, fmt, ap);
+    va_end(ap);
+    v_set_rgb(cr, rgb, 1.0);
+    pango_layout_set_font_description(g_lay, fd);
+    pango_layout_set_width(g_lay, (int)(maxw * PANGO_SCALE));
+    pango_layout_set_wrap(g_lay, PANGO_WRAP_WORD_CHAR);
+    pango_layout_set_ellipsize(g_lay, PANGO_ELLIPSIZE_END);
+    pango_layout_set_height(g_lay, -maxlines);   /* 负数 = 行数上限 */
+    pango_layout_set_text(g_lay, buf, -1);
+    cairo_move_to(cr, x, y);
+    pango_cairo_show_layout(cr, g_lay);
+    PangoRectangle r;
+    pango_layout_get_extents(g_lay, NULL, &r);
+    /* 复位：v_text() 等调用依赖「无宽度约束」的布局 */
+    pango_layout_set_width(g_lay, -1);
+    pango_layout_set_height(g_lay, -1);
+    pango_layout_set_wrap(g_lay, PANGO_WRAP_WORD);
+    pango_layout_set_ellipsize(g_lay, PANGO_ELLIPSIZE_NONE);
+    return (double)r.height / PANGO_SCALE;
+}
+
 /* 排版一次 = 一次 pango 整形。实测一帧要整形 100+ 次（两台主机 + 24 行进程），
  * 每帧 5~10ms ⇒ 1 Hz 重绘就是 0.5~1% of one core。
  * ⚠️ 所以「右对齐/居中」**必须复用这一次排版**去取宽度：

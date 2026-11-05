@@ -48,6 +48,8 @@ PangoFontDescription *v_fd_huge(void);
 void v_set_rgb(cairo_t *cr, uint32_t rgb, double a);
 double v_text_w(PangoFontDescription *fd, const char *s);
 double v_text_h(PangoFontDescription *fd, const char *s);
+double v_text_wrap(cairo_t *cr, double x, double y, PangoFontDescription *fd, uint32_t rgb,
+                   double maxw, int maxlines, const char *fmt, ...);
 double v_text(cairo_t *cr, double x, double y, PangoFontDescription *fd, uint32_t rgb,
               const char *fmt, ...);
 void v_text_right(cairo_t *cr, double xr, double y, PangoFontDescription *fd, uint32_t rgb,

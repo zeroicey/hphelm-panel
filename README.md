@@ -143,7 +143,7 @@ hphelm-panel --kiosk             # 纯显示器：永不进登录页/桌面（Pi
 hphelm-panel --remote2 hpcore    # 第二台真机：替换 kiosk 下左列的「本机」
 hphelm-panel --scene panel|trending  # 钉住一幕（不轮换）
 hphelm-panel --rotate 30         # 幕轮换间隔（秒）；0 = 不轮换（kiosk 默认 30，桌面默认 0）
-hphelm-panel --transition cut|dip|push|cover    # 固定转场特效（缺省每次换一种）
+hphelm-panel --transition dip|cut  # 转场：dip=淡出淡入（默认）· cut=硬切（验版式用）
 hphelm-panel --theme auto|day|night  # 主题：auto=按时刻自动切（默认）· day/night 钉住
 hphelm-panel --theme-day 07:00   # 白天起点（默认 07:00）
 hphelm-panel --theme-night 19:00 # 夜间起点（默认 19:00）
@@ -154,10 +154,9 @@ HPHELM_PANEL_DEBUG=1 …            # 主循环仪表：it/s · poll 结果 · �
 
 ### 多幕（一块屏不只显示一种东西）
 
-面板是**幕**的一个实现，目前两幕：`panel`（三列密排）· `trending`（GitHub 趋势，**两列 12 条**）。
-`--kiosk` 下默认每 **30 s** 换一幕、四种转场（cut/dip/push/cover）轮流用；
-桌面/锁屏模式默认**不轮换**（还是你熟悉的那个面板）。加一幕 = 新建 `src/scene_*.c`
-+ 在 `scenes.c` 的表里加一行，别的不动。
+面板是**幕**的一个实现，目前两幕：`panel`（三列密排）· `trending`（GitHub 趋势，**两列 10 条、
+描述两行**）。`--kiosk` 下默认每 **30 s** 淡出淡入换一幕；桌面/锁屏模式默认**不轮换**。
+加一幕 = 新建 `src/scene_*.c` + 在 `scenes.c` 的表里加一行，别的不动。
 
 ### 白天 / 夜间主题
 

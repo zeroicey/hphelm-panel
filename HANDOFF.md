@@ -88,6 +88,18 @@
   40 ms 采一次平均亮度：白天 237 → 谷底 5.7 → 夜间 21.5，日志 `主题：夜间` 正好在边界；
   反向（夜间→白天）同样通过。真机重启后 `主题：白天`，`probe-frames` 0 帧 >30%。
 
+**追加（同日）：趋势幕改版 + 只留淡变**
+
+- `trending`：两列 × **5 行**（10 条），描述 13pt **最多两行**（新增 `v_text_wrap()`，Pango
+  按宽度折行 + 末行省略，返回实际高度）；总星挪到标题行（`TypeScript · 113.0k★`），
+  描述因此可用整列宽。6 行放两行描述会压到分隔线，所以是 5 行/列。
+- 转场只留 `dip`（淡出到 `crust` 再淡入）+ `cut`（验版式）。`push`/`cover` 连同 `altpix`
+  第二缓冲一起删掉 —— 每次切幕少一次全屏绘制，也不再占 8 MiB。
+- 验证：trending day/night 两张实拍（无重叠、两行描述不压线）；`--rotate 4` 抓 60 帧，
+  中间帧标准差从 ~40 掉到 **7.5**（整屏被底色糊住）且无水平位移 ⇒ 确实是淡变。
+- 坑：`pango_layout_set_height(-2)` 之后必须把 width/height/wrap/ellipsize **复位**，
+  否则后续 `v_text()` 全被两行宽度约束带着走。
+
 **下一轮**：让 `tools/deploy.sh` 认出 hpopi5b（路径/服务名 + 安装 `fetch-trending.py` 与 timer），并把 `--rotate` 写进 `/etc/hphelm-panel.conf`
 （当前靠 kiosk 默认 30 s）；按肉眼感受决定 25/30/45。
 

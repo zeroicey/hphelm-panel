@@ -47,9 +47,7 @@ int scene_index(const char *id); /* -1 = 没有 */
 /* ---- 转场 ---- */
 typedef enum {
     FX_CUT = 0,   /* 硬切 */
-    FX_DIP,       /* 经黑过渡（便宜：纯色覆盖，不需要 ARGB 合成） */
-    FX_PUSH,      /* 新幕从左把旧幕推走 */
-    FX_COVER,     /* 新幕从右盖上来，旧幕不动 */
+    FX_DIP,       /* 淡出到底色再淡入（唯一默认转场：纯色覆盖，不需要 ARGB 合成） */
     FX__N
 } scene_fx_t;
 

@@ -16,7 +16,7 @@
 #include "scene.h"
 
 #define TR_MAX 16
-#define TR_SHOW 12  /* 两列 × 6 行 */
+#define TR_SHOW 10  /* 两列 × 5 行：描述占两行，行距才不挤 */
 
 typedef struct {
     char name[80];
@@ -140,7 +140,7 @@ static void draw(cairo_t *cr, const view_ctx_t *v, const scene_env_t *e) {
     const double gap = L_COL_GAP;
     const double cw = (mw - gap) / 2;
     const double y0 = L_BODY_Y + 10;
-    const int percol = 6;
+    const int percol = 5;
     const double rh = (v->lh - 26 - y0) / percol;
 
     char head[64];
@@ -155,7 +155,7 @@ static void draw(cairo_t *cr, const view_ctx_t *v, const scene_env_t *e) {
         int col = i / percol, row = i % percol;
         double cx = mx + col * (cw + gap);
         double y = y0 + row * rh;
-        double base = y + 34;
+        double base = y + 30;
 
         v_text(cr, cx, base, FD_RANK, C_OVERLAY0, "%02d", i + 1);
 
@@ -166,21 +166,19 @@ static void draw(cairo_t *cr, const view_ctx_t *v, const scene_env_t *e) {
 
         /* 第一行：仓库名（截断到「语言 + 涨星」之前） + 语言 + 今日涨星 */
         double today_w = v_text_w(FD_TODAY, today) + 12;
-        double lang_w = r->lang[0] ? v_text_w(FD_DESC, r->lang) + 14 : 0;
+        char langtxt[64];
+        if (r->lang[0]) snprintf(langtxt, sizeof langtxt, "%s · %s★", r->lang, tot);
+        else snprintf(langtxt, sizeof langtxt, "%s★", tot);
+        double lang_w = v_text_w(FD_DESC, langtxt) + 14;
         double name_max = cw - 30 - today_w - lang_w;
         char name[96];
         fit(name, sizeof name, FD_REPO, r->name, name_max);
         v_text(cr, cx + 30, base, FD_REPO, C_TEXT, "%s", name);
-        if (r->lang[0])
-            v_text_right(cr, cx + cw - today_w, base, FD_DESC, C_SUBTEXT1, "%s", r->lang);
+        v_text_right(cr, cx + cw - today_w, base, FD_DESC, C_SUBTEXT1, "%s", langtxt);
         v_text_right(cr, cx + cw, base, FD_TODAY, C_YELLOW, "%s", today);
 
-        /* 第二行：描述（13pt）+ 总星（小字靠右） */
-        double tot_w = v_text_w(FD_RANK, tot) + 22;
-        char desc[300];
-        fit(desc, sizeof desc, FD_DESC, r->desc, cw - 30 - tot_w);
-        v_text(cr, cx + 30, base + 36, FD_DESC, C_SUBTEXT0, "%s", desc);
-        v_text_right(cr, cx + cw, base + 36, FD_RANK, C_OVERLAY0, "%s★", tot);
+        /* 第二行：描述最多两行（超出省略）；总星挪到标题行，描述可用整列宽 */
+        v_text_wrap(cr, cx + 30, base + 24, FD_DESC, C_SUBTEXT0, cw - 30, 2, "%s", r->desc);
 
         if (row + 1 < percol && i + 1 < n) v_rule(cr, cx, y + rh - 4, cw);
     }

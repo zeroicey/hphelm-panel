@@ -23,7 +23,6 @@ static int rotating = 1;
 static double rotate_s = 30.0;
 static double since;
 static int fx_fixed = -1;
-static int fx_next;
 static scene_trans_t TR;
 static unsigned gen = 1;
 
@@ -42,8 +41,6 @@ const char *scene_fx_name(scene_fx_t fx) {
     switch (fx) {
     case FX_CUT: return "cut";
     case FX_DIP: return "dip";
-    case FX_PUSH: return "push";
-    case FX_COVER: return "cover";
     default: return "?";
     }
 }
@@ -60,8 +57,7 @@ void scenes_reset(double now, int pin, double rotate, int fx) {
     pin_idx = cur;
     rotating = rotate > 0 && N > 1 && pin < 0;
     rotate_s = rotate > 0 ? rotate : 30.0;
-    fx_fixed = (fx >= 0 && fx < FX__N) ? fx : -1;
-    fx_next = 0;
+    fx_fixed = (fx >= 0 && fx < FX__N) ? fx : FX_DIP;   /* 不指定就淡入淡出 */
     since = now;
     TR.active = 0;
     memset(&TR, 0, sizeof TR);
@@ -83,7 +79,7 @@ int scenes_tick(double now) {
     if (now - since < rotate_s) return 0;
 
     int to = (cur + 1) % N;
-    scene_fx_t fx = fx_fixed >= 0 ? (scene_fx_t)fx_fixed : (scene_fx_t)(fx_next++ % FX__N);
+    scene_fx_t fx = (scene_fx_t)fx_fixed;
     TR.active = 1;
     TR.from = SCENES[cur];
     TR.to = SCENES[to];

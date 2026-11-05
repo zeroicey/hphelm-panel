@@ -227,9 +227,6 @@ static GC blitgc;                  /* 一次 XCopyArea 上屏用的 GC */
 static unsigned long long g_sig;   /* 上一帧内容签名（内容没变就不重绘） */
 static int g_sig_valid;
 /* ---- 幕与转场 ---- */
-static Pixmap altpix;              /* 转场第二缓冲（懒分配：只有真的轮换才占这 8 MiB） */
-static cairo_surface_t *altsurf;
-static cairo_t *altcr;
 static scene_env_t ENV;            /* 每帧重填（指针指向 M/R/R2/FEED*） */
 
 /* ---------------- 运行状态 ---------------- */
@@ -340,9 +337,6 @@ static void surface_init(void) {
     back = XCreatePixmap(dpy, root, (unsigned)SW, (unsigned)SH,
                          (unsigned)DefaultDepth(dpy, scr));
     /* 尺寸变了 ⇒ 转场缓冲跟着重建（若已分配；重建会打断正在进行的转场，可接受） */
-    if (altcr) { cairo_destroy(altcr); altcr = NULL; }
-    if (altsurf) { cairo_surface_destroy(altsurf); altsurf = NULL; }
-    if (altpix) { XFreePixmap(dpy, altpix); altpix = 0; }
     bg_init();
     surf = cairo_xlib_surface_create(dpy, back, DefaultVisual(dpy, scr), SW, SH);
     cr = cairo_create(surf);
@@ -434,15 +428,6 @@ static void env_fill(void) {
     ENV.feed2 = &FEED2;
 }
 
-static void ensure_alt(void) {
-    if (altpix) return;
-    altpix = XCreatePixmap(dpy, root, (unsigned)SW, (unsigned)SH,
-                           (unsigned)DefaultDepth(dpy, scr));
-    altsurf = cairo_xlib_surface_create(dpy, altpix, DefaultVisual(dpy, scr), SW, SH);
-    altcr = cairo_create(altsurf);
-    logf_("幕转场：分配第二块离屏缓冲 %dx%d", SW, SH);
-}
-
 /* 把一幕画进指定缓冲：先服务器端拷底图，再 cairo 画内容。pm/cr/surf 必须配对。 */
 static void scene_into(Pixmap pm, cairo_t *tcr, cairo_surface_t *tsurf, const scene_t *s) {
     cairo_surface_flush(tsurf);
@@ -471,12 +456,13 @@ static void draw_hud(cairo_t *tcr) {
     }
 }
 
-/* 转场：两块缓冲做切片/淡出，最后统一上屏（绝不中途直接画窗口） */
+/* 转场：只有「淡出到背景色再淡入」一种（硬切用于测试）。
+ * 为什么不做平移：平移要把两幕分别画进两块 8 MiB 缓冲再做切片，
+ * 视觉收益小、每次切幕多一次全屏绘制；淡变只需要一块缓冲 + 一次纯色覆盖。 */
 static void render_transition(scene_trans_t *T) {
     double t = (ENV.now - T->t0) / T->dur;
     if (t < 0) t = 0;
     if (t > 1) t = 1;
-    ensure_alt();
     switch (T->fx) {
     case FX_DIP: {
         scene_into(back, cr, surf, t < 0.5 ? T->from : T->to);
@@ -487,22 +473,6 @@ static void render_transition(scene_trans_t *T) {
         cairo_paint(cr);
         cairo_restore(cr);
         cairo_surface_flush(surf);
-    } break;
-    case FX_PUSH: {
-        scene_into(back, cr, surf, T->to);
-        scene_into(altpix, altcr, altsurf, T->from);
-        unsigned w = (unsigned)(SW * t);
-        if (w > 0 && w < (unsigned)SW)
-            XCopyArea(dpy, altpix, back, blitgc, w, 0, (unsigned)SW - w, (unsigned)SH, 0, 0);
-        cairo_surface_mark_dirty(surf);
-    } break;
-    case FX_COVER: {
-        scene_into(back, cr, surf, T->from);
-        scene_into(altpix, altcr, altsurf, T->to);
-        unsigned w = (unsigned)(SW * t);
-        if (w > 0)
-            XCopyArea(dpy, altpix, back, blitgc, 0, 0, w, (unsigned)SH, (unsigned)SW - w, 0);
-        cairo_surface_mark_dirty(surf);
     } break;
     case FX_CUT:
     default:

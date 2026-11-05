@@ -139,9 +139,25 @@ hphelm-panel --scale 1.48         # 缩放（物理/逻辑像素比）
 hphelm-panel --remote hpcore      # 生产服务器（ssh 目标）；空 = 只显示本机
 hphelm-panel --lock /tmp/x.lock   # 单实例锁路径（默认 /tmp/hphelm-panel.lock）
 hphelm-panel --state panel|login  # 强制初始状态（验证界面用）
+hphelm-panel --kiosk             # 纯显示器：永不进登录页/桌面（Pi 看板用）
+hphelm-panel --remote2 hpcore    # 第二台真机：替换 kiosk 下左列的「本机」
+hphelm-panel --scene panel|hero|clock|ambient  # 钉住一幕（不轮换）
+hphelm-panel --rotate 30         # 幕轮换间隔（秒）；0 = 不轮换（kiosk 默认 30，桌面默认 0）
+hphelm-panel --transition cut|dip|push|cover    # 固定转场特效（缺省每次换一种）
+hphelm-panel --list-scenes       # 列出可用幕后退出（不需要 X）
 hphelm-panel --dump               # 只打采集层数据后退出（不需要 X）
 HPHELM_PANEL_DEBUG=1 …            # 主循环仪表：it/s · poll 结果 · 事件类型 · 各阶段耗时
 ```
+
+### 多幕（一块屏不只显示一种东西）
+
+面板是**幕**的一个实现：`panel`（三列密排）· `hero`（远看大字）· `clock`（钟/日期）·
+`ambient`（近黑环境）。`--kiosk` 下默认每 **30 s** 换一幕、四种转场（cut/dip/push/cover）
+轮流用；桌面/锁屏模式默认**不轮换**（还是你熟悉的那个面板）。
+
+轮换间隔只有一个数 `--rotate`（或 `/etc/hphelm-panel.conf` 的 `rotate=`）：30 s 的来历是
+「密排面板抬头到看完约 8~12 s，留 2~3 倍余量」；4 幕 × 30 s = 2 分钟一圈，再长值班的人会漏掉
+告警页。真要放很多幕，正确做法是「告警幕常驻 + 其余轮换」，不是把间隔压到 5 s。
 
 ## 文档地图
 
@@ -164,6 +180,12 @@ src/remote.[ch]     生产服务器采集：ssh 长连接 + 非阻塞行解析 +
 src/view.[ch]       绘制基元：文字/背景渐变/细线/进度条/每核柱/sparkline/量程量化
 src/view_panel.c    面板版面（无卡片、三列：本机 │ 生产 │ 进程榜）
 src/view_login.c    登录页版面（无卡片、居中）
+src/scene.h         幕的接口：draw + 自己的内容签名（不碰 X）
+src/scenes.c        幕的注册表 + 轮换调度 + 转场推进（纯逻辑）
+src/scene_panel.c   幕「运维面板」（转调 view_panel.c）
+src/scene_hero.c    幕「远看版」（两行主机 × 四个巨大数字）
+src/scene_clock.c   幕「钟与日期」（200pt 级 HH:MM + 分钟进度线）
+src/scene_ambient.c 幕「环境」（几乎全暗，一分钟重画一次）
 src/auth.[ch]       与 setuid 助手通信（密码只走 stdin）
 src/hphelm-auth.c   唯一的特权代码：setuid root，调 PAM 验一次密码
 src/panel.c         X11 窗口、事件、状态机、主循环、双缓冲

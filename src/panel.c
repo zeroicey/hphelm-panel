@@ -18,9 +18,18 @@
  *   PANEL ──idle≥sleep_off──▶ 关屏（DPMS），任意输入即唤醒
  *        └─ sleep_off ≤ 0 ⇒ 永不关屏（面板要 7×24 一直显示，2026-10-19 口径）
  *
+ * 多幕（scene）：面板本身只是「一幕」。--kiosk 下默认 30s 轮换一幕，
+ *   固定特效循环；每幕自带内容签名，与旧版一样「内容不变不重绘」。
+ *   转场用两块离屏缓冲（失败才分配）做切片/淡出，不直接画窗口。
+ *
  * 用法： hphelm-panel [--scale N] [--panel-idle S] [--login-back S]
  *                     [--input-grace S] [--sleep-off S] [--dump] [--once]
  *                     [--remote HOST]  （生产服务器：ssh 目标；空/缺省 = 不采集）
+ *                     [--remote2 HOST] （第二台真机：纯显示器场景下替换左列本机）
+ *                     [--scene ID]     （钉住一幕，不轮换：panel|hero|clock|ambient）
+ *                     [--rotate S]     （轮换间隔，秒；0 = 不轮换）
+ *                     [--transition FX] （cut|dip|push|cover；缺省每轮换一种）
+ *                     [--list-scenes]  （列出幕的 id 与名字后退出）
  *                     [--state desktop|panel|login]   （测试用：强制初始状态）
  *                     [--lock PATH]                   （单实例锁路径，默认 /tmp/hphelm-panel.lock）
  */
@@ -49,6 +58,7 @@
 #include "auth.h"
 #include "metrics.h"
 #include "remote.h"
+#include "scene.h"
 #include "theme.h"
 #include "view.h"
 
@@ -77,6 +87,10 @@ static const char *CFG_FILE = "/etc/hphelm-panel.conf";
 static int FORCE_STATE = -1;
 static int CFG_KIOSK = 0;  /* --kiosk：纯显示器（永不进登录页/桌面，输入一律忽略） */
 static char CFG_REMOTE2[64] = ""; /* 左列第二台远程机（--remote2；空 = 左列仍显示本机） */
+/* 幕轮换：-1 = 未指定 ⇒ kiosk 默认 30s，桌面/锁屏默认不轮换（要显式打开） */
+static double CFG_ROTATE = -1;
+static char CFG_SCENE[32] = "";    /* 钉住某一幕（--scene）；空 = 从 panel 开始轮换 */
+static int CFG_TRANS = -1;          /* -1 = 每次自动换一种特效；>=0 = 固定 */
 static int DBG = 0;               /* HPHELM_PANEL_DEBUG=1：每秒打印主循环仪表 */
 static long dbg_iter, dbg_ev, dbg_poll_rd, dbg_poll_to, dbg_poll_oth, dbg_redraw, dbg_sample;
 static long dbg_remote_frames;
@@ -112,6 +126,25 @@ static void read_conf_file(void) {
             CFG_KIOSK = (v[0] == '1' || v[0] == 'y' || v[0] == 'Y' || v[0] == 't');
             continue;
         }
+        if (strncmp(p, "rotate=", 7) == 0 && CFG_ROTATE < 0) {
+            char *v = p + 7;
+            v[strcspn(v, " \t\r\n")] = 0;
+            CFG_ROTATE = atof(v);
+            continue;
+        }
+        if (strncmp(p, "scene=", 6) == 0 && !CFG_SCENE[0]) {
+            char *v = p + 6;
+            v[strcspn(v, " \t\r\n")] = 0;
+            if (v[0]) snprintf(CFG_SCENE, sizeof CFG_SCENE, "%s", v);
+            continue;
+        }
+        if (strncmp(p, "transition=", 11) == 0 && CFG_TRANS < 0) {
+            char *v = p + 11;
+            v[strcspn(v, " \t\r\n")] = 0;
+            int fx = scene_fx_by_name(v);
+            if (fx >= 0) CFG_TRANS = fx;
+            continue;
+        }
     }
     fclose(f);
 }
@@ -142,6 +175,11 @@ static Pixmap bgpix;               /* 渐变底（整屏画一次，每帧 XCopy
 static GC blitgc;                  /* 一次 XCopyArea 上屏用的 GC */
 static unsigned long long g_sig;   /* 上一帧内容签名（内容没变就不重绘） */
 static int g_sig_valid;
+/* ---- 幕与转场 ---- */
+static Pixmap altpix;              /* 转场第二缓冲（懒分配：只有真的轮换才占这 8 MiB） */
+static cairo_surface_t *altsurf;
+static cairo_t *altcr;
+static scene_env_t ENV;            /* 每帧重填（指针指向 M/R/R2/FEED*） */
 
 /* ---------------- 运行状态 ---------------- */
 static int state = ST_DESKTOP;
@@ -227,6 +265,10 @@ static void surface_init(void) {
     if (back) { XFreePixmap(dpy, back); back = 0; }
     back = XCreatePixmap(dpy, root, (unsigned)SW, (unsigned)SH,
                          (unsigned)DefaultDepth(dpy, scr));
+    /* 尺寸变了 ⇒ 转场缓冲跟着重建（若已分配；重建会打断正在进行的转场，可接受） */
+    if (altcr) { cairo_destroy(altcr); altcr = NULL; }
+    if (altsurf) { cairo_surface_destroy(altsurf); altsurf = NULL; }
+    if (altpix) { XFreePixmap(dpy, altpix); altpix = 0; }
     bg_init();
     surf = cairo_xlib_surface_create(dpy, back, DefaultVisual(dpy, scr), SW, SH);
     cr = cairo_create(surf);
@@ -268,6 +310,7 @@ static void set_state(int s) {
     logf_("状态 %s → %s（idle=%.1fs）", state_name(state), state_name(s), x_idle());
     state = s;
     state_enter = now_s();
+    if (s == ST_PANEL) scenes_resume(state_enter); /* 打断转场 + 停留计时重来 */
     g_err[0] = 0;
     if (s == ST_DESKTOP) {
         win_hide();
@@ -306,6 +349,94 @@ static void dpms(int on) {
 }
 
 /* ---------------- 绘制 ---------------- */
+/* 幕的数据环境：每帧重填（now/wall 会变），指针常量指向采样结构 */
+static void env_fill(void) {
+    ENV.now = now_s();
+    ENV.wall = time(NULL);
+    ENV.m = &M;
+    ENV.r = &R;
+    ENV.r2 = &R2;
+    ENV.feed = &FEED;
+    ENV.feed2 = &FEED2;
+}
+
+static void ensure_alt(void) {
+    if (altpix) return;
+    altpix = XCreatePixmap(dpy, root, (unsigned)SW, (unsigned)SH,
+                           (unsigned)DefaultDepth(dpy, scr));
+    altsurf = cairo_xlib_surface_create(dpy, altpix, DefaultVisual(dpy, scr), SW, SH);
+    altcr = cairo_create(altsurf);
+    logf_("幕转场：分配第二块离屏缓冲 %dx%d", SW, SH);
+}
+
+/* 把一幕画进指定缓冲：先服务器端拷底图，再 cairo 画内容。pm/cr/surf 必须配对。 */
+static void scene_into(Pixmap pm, cairo_t *tcr, cairo_surface_t *tsurf, const scene_t *s) {
+    cairo_surface_flush(tsurf);
+    XCopyArea(dpy, bgpix, pm, blitgc, 0, 0, (unsigned)SW, (unsigned)SH, 0, 0);
+    cairo_surface_mark_dirty(tsurf);
+    view_ctx_t v = {.scale = SCALE, .lw = SW / SCALE, .lh = SH / SCALE, .bg_done = 1};
+    cairo_save(tcr);
+    cairo_scale(tcr, SCALE, SCALE);
+    s->draw(tcr, &v, &ENV);
+    cairo_restore(tcr);
+    cairo_surface_flush(tsurf);
+}
+
+/* 底部居中的幕指示：几个小点，当前幕实心。轮换关掉时不画。 */
+static void draw_hud(cairo_t *tcr) {
+    int n = scenes_count();
+    if (n < 2 || !scenes_rotating()) return;
+    int cur = scenes_current_index();
+    if (scenes_transitioning()) cur = -1;
+    double cx = (SW / SCALE) / 2, y = (SH / SCALE) - 9;
+    for (int i = 0; i < n; i++) {
+        double x = cx + (i - (n - 1) / 2.0) * 14.0;
+        v_set_rgb(tcr, i == cur ? C_SUBTEXT1 : C_OVERLAY0, i == cur ? 0.9 : 0.35);
+        cairo_arc(tcr, x, y, i == cur ? 2.4 : 1.8, 0, 2 * M_PI);
+        cairo_fill(tcr);
+    }
+}
+
+/* 转场：两块缓冲做切片/淡出，最后统一上屏（绝不中途直接画窗口） */
+static void render_transition(scene_trans_t *T) {
+    double t = (ENV.now - T->t0) / T->dur;
+    if (t < 0) t = 0;
+    if (t > 1) t = 1;
+    ensure_alt();
+    switch (T->fx) {
+    case FX_DIP: {
+        scene_into(back, cr, surf, t < 0.5 ? T->from : T->to);
+        double a = t < 0.5 ? t * 2 : (1 - t) * 2; /* 0 → 1 → 0 */
+        cairo_save(cr);
+        cairo_scale(cr, SCALE, SCALE);
+        v_set_rgb(cr, C_CRUST, a);
+        cairo_paint(cr);
+        cairo_restore(cr);
+        cairo_surface_flush(surf);
+    } break;
+    case FX_PUSH: {
+        scene_into(back, cr, surf, T->to);
+        scene_into(altpix, altcr, altsurf, T->from);
+        unsigned w = (unsigned)(SW * t);
+        if (w > 0 && w < (unsigned)SW)
+            XCopyArea(dpy, altpix, back, blitgc, w, 0, (unsigned)SW - w, (unsigned)SH, 0, 0);
+        cairo_surface_mark_dirty(surf);
+    } break;
+    case FX_COVER: {
+        scene_into(back, cr, surf, T->from);
+        scene_into(altpix, altcr, altsurf, T->to);
+        unsigned w = (unsigned)(SW * t);
+        if (w > 0)
+            XCopyArea(dpy, altpix, back, blitgc, 0, 0, w, (unsigned)SH, (unsigned)SW - w, 0);
+        cairo_surface_mark_dirty(surf);
+    } break;
+    case FX_CUT:
+    default:
+        scene_into(back, cr, surf, T->to);
+        break;
+    }
+}
+
 /* 内容签名：只有它变了才重画（时钟每秒变 ⇒ 面板仍是 1Hz；
    空闲无变化时不再白白重绘，省 CPU 也少一次上屏） */
 static unsigned long long content_sig(void) {
@@ -336,6 +467,17 @@ static unsigned long long content_sig(void) {
         h ^= *e;
         h *= 1099511628211ULL;
     }
+    if (state == ST_PANEL) {
+        env_fill();
+        /* 幕内容也进签名：换幕 / 转场进度 / 幕内数据变化才重绘 */
+        const scene_t *sc = scenes_current();
+        MIX(sc->sig(&ENV));
+        MIX(scenes_current_index());
+        if (scenes_transitioning()) {
+            MIX(scenes_transition()->gen);
+            MIX((long)((ENV.now - scenes_transition()->t0) * 100));
+        }
+    }
 #undef MIX
     return h;
 }
@@ -343,6 +485,18 @@ static unsigned long long content_sig(void) {
 /* 把当前状态画进离屏后备缓冲（不碰窗口） */
 static void render(void) {
     if (state == ST_DESKTOP) return;
+    scene_trans_t *T = scenes_transition();
+    if (state == ST_PANEL) {
+        env_fill();
+        if (T->active) render_transition(T);
+        else scene_into(back, cr, surf, scenes_current());
+        cairo_save(cr);
+        cairo_scale(cr, SCALE, SCALE);
+        draw_hud(cr);
+        cairo_restore(cr);
+        cairo_surface_flush(surf);
+        return;
+    }
     /* 先铺底（服务器端 blit，不经过像素），再让 cairo 在最上面画内容 */
     if (bgpix) {
         cairo_surface_flush(surf);
@@ -352,17 +506,9 @@ static void render(void) {
     view_ctx_t v = {.scale = SCALE, .lw = SW / SCALE, .lh = SH / SCALE, .bg_done = bgpix != 0};
     cairo_save(cr);
     cairo_scale(cr, SCALE, SCALE);
-    if (state == ST_PANEL) {
-        /* 左列：配了 --remote2 就用第二台远程机（纯显示器场景），否则仍是本机 */
-        view_feed_t lf = R2.enabled ? FEED2 : (view_feed_t){0};
-        view_panel_draw(cr, &v, R2.enabled ? &R2.m : &M, &lf, R2.enabled ? R2.target : "本机",
-                        R.enabled ? &R.m : NULL, R.enabled ? &FEED : NULL,
-                        R.enabled ? R.target : NULL);
-    } else {
-        int wait = (retry_at > 0) ? (int)(retry_at - now_s()) : 0;
-        if (wait < 0) wait = 0;
-        view_login_draw(cr, &v, &M, g_user, pwlen, g_err, busy, cursor_on, wait);
-    }
+    int wait = (retry_at > 0) ? (int)(retry_at - now_s()) : 0;
+    if (wait < 0) wait = 0;
+    view_login_draw(cr, &v, &M, g_user, pwlen, g_err, busy, cursor_on, wait);
     cairo_restore(cr);
 }
 
@@ -546,6 +692,8 @@ static void dbg_tick(void) {
 /* ---------------- 主循环 ---------------- */
 int main(int argc, char **argv) {
     int once = 0, dump = 0;
+    /* 先读配置文件，再让命令行覆盖（--remote > 文件；幕参数同理） */
+    read_conf_file();
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--once")) once = 1;
         else if (!strcmp(argv[i], "--dump")) dump = 1;
@@ -559,6 +707,21 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--kiosk")) CFG_KIOSK = 1;
         else if (!strcmp(argv[i], "--remote2") && i + 1 < argc)
             snprintf(CFG_REMOTE2, sizeof CFG_REMOTE2, "%s", argv[++i]);
+        else if (!strcmp(argv[i], "--scene") && i + 1 < argc)
+            snprintf(CFG_SCENE, sizeof CFG_SCENE, "%s", argv[++i]);
+        else if (!strcmp(argv[i], "--rotate") && i + 1 < argc) CFG_ROTATE = atof(argv[++i]);
+        else if (!strcmp(argv[i], "--transition") && i + 1 < argc) {
+            int fx = scene_fx_by_name(argv[++i]);
+            if (fx < 0) {
+                fprintf(stderr, "未知特效：%s（可用：cut dip push cover）\n", argv[i]);
+                return 2;
+            }
+            CFG_TRANS = fx;
+        } else if (!strcmp(argv[i], "--list-scenes")) {
+            for (int k = 0; k < scenes_count(); k++)
+                printf("%s\t%s\n", scene_at(k)->id, scene_at(k)->label);
+            return 0;
+        }
         else if (!strcmp(argv[i], "--lock") && i + 1 < argc) CFG_LOCK = argv[++i];
         else if (!strcmp(argv[i], "--state") && i + 1 < argc) {
             if (!strcmp(argv[i + 1], "desktop")) FORCE_STATE = ST_DESKTOP;
@@ -686,6 +849,15 @@ int main(int argc, char **argv) {
     /* 初始状态 */
     state = CFG_KIOSK ? ST_PANEL : ((FORCE_STATE >= 0) ? FORCE_STATE : ST_DESKTOP);
     state_enter = now_s();
+    /* 幕：--scene 钉住一幕；否则从 panel 开始。kiosk 默认 30s 轮换，桌面/锁屏默认不轮换 */
+    {
+        double rot = CFG_ROTATE;
+        if (rot < 0) rot = CFG_KIOSK ? 30.0 : 0.0;
+        int pin = CFG_SCENE[0] ? scene_index(CFG_SCENE) : -1;
+        if (CFG_SCENE[0] && pin < 0)
+            logf_("未知幕「%s」⇒ 退回 panel（用 --list-scenes 看可用幕）", CFG_SCENE);
+        scenes_reset(state_enter, pin, rot, CFG_TRANS);
+    }
     char so[32] = {0};
     sleep_off_desc(so, sizeof so);
     logf_("启动：初始 %s · panel_idle=%.0fs · login_back=%.0fs · grace=%.1fs · "
@@ -814,6 +986,9 @@ int main(int argc, char **argv) {
             }
         }
 
+        /* --- 幕轮换 / 转场推进（返回 1 = 需要一帧，签名里已含进度） --- */
+        if (state == ST_PANEL) (void)scenes_tick(now_s());
+
         /* --- 重绘（面板 1Hz；登录页只闪光标） --- */
         if (state == ST_PANEL) {
             redraw();
@@ -854,6 +1029,8 @@ int main(int argc, char **argv) {
         /* 第二个源存在但第三个不存在时，p[2] 必须在末尾——用“紧凑”排列避开空洞 */
         if (p[1].fd < 0 && p[2].fd >= 0) { p[1] = p[2]; p[2].fd = -1; }
         int timeout = state == ST_DESKTOP ? 1000 : 500;
+        /* 转场要 30ms 一帧（~33fps，0.55s 共 ~18 帧）；平时仍 500ms 一次 */
+        if (scenes_transitioning()) timeout = 30;
         int pr = poll(p, (unsigned)nfd, timeout);
         if (DBG) {
             if (pr == 0) dbg_poll_to++;

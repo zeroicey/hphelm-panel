@@ -133,6 +133,45 @@ hphelm-panel ──fork/exec──▶ ssh -T <target> 'perl -'   ──▶ 被�
 **`--dump` 会真的拉一帧**（部署自检靠它判「链路通」）。⚠️ 配置行必须是 `--dump` 输出的**最后一行**
 以外的位置按前缀取 —— 我第一版让部署脚本用 `tail -1`，加一行日志就把判据搞成了假失败。
 
+## 二·六、多幕（scene）与转场（`src/scene*.c`、`src/scenes.c`）
+
+面板不再是「一个写死的版面」，而是**幕**（scene）的一个实现。接口在 `src/scene.h`：
+
+```c
+typedef struct {
+    const char *id, *label;
+    void (*draw)(cairo_t *, const view_ctx_t *, const scene_env_t *);
+    unsigned long long (*sig)(const scene_env_t *);
+} scene_t;
+```
+
+- `draw` 收到**已经 `cairo_scale` 过的**上下文，底图（`bgpix`）也已经 `XCopyArea` 到目标缓冲上；
+  幕只画自己的内容，不铺底、不碰 X。
+- `sig` 是**幕自己的内容签名**，与 `panel.c` 里原有的 `content_sig()` 相与。`panel` 幕哈希
+  `metrics_t`（1 Hz 变化）；`clock` 幕哈希墙钟秒（1 Hz）；`ambient` 幕哈希「分钟」——它一分钟
+  才重画一次，这是刻意的（见 `scene_ambient.c` 顶部注释）。
+- 调度只有**一个数**：`--rotate S`（默认 kiosk 30s、桌面/锁屏 0=不轮换）。不搞每幕不同停留。
+  已经出现「信息密度差很多」的幕时，再给 `scene_t` 加 `dwell` 字段 —— 现在不要提前设计。
+
+**双缓冲 + 转场**：`back` 是最终帧；`altpix` 是**懒分配**的第二块离屏缓冲（只有真发生转场才占
+8 MiB）。转场四种：
+
+| 特效 | 做法 | 代价 |
+| --- | --- | --- |
+| `cut` | 直接画目标幕，没有中间帧 | 0 |
+| `dip` | 前半画 A 叠 `crust` 渐黑、后半画 B 从黑里出来 | 每帧 1 次整屏 `cairo_paint` |
+| `push` | B 画进 `back`，A 画进 `altpix`，`XCopyArea` 把 A 的剩余部分贴到左边 | 每帧 2 次幕绘制 |
+| `cover` | A 画进 `back`，B 画进 `altpix`，B 从左边盖过来 | 每帧 2 次幕绘制 |
+
+转场时长固定 0.55 s；主循环在转场期间把 `poll` 超时从 500 ms 压到 **30 ms**（≈ 33 fps 上限），
+结束后恢复 500 ms。性能预算：0.55 s × 2 幕 ≈ 25 ms 的额外 CPU，**摊到 30 s 轮换周期上 ≈ 0.08%**。
+
+**回到面板时**（`set_state(ST_PANEL)`）调 `scenes_resume(now)`：打断进行中的转场、把停留计时
+从现在重新开始 —— 否则「登录页待了两分钟，一回到面板立刻又换幕」。
+
+**统一 HUD**：`render()` 在所有幕之后画底部居中的几个小点（当前幕实心），只有轮换打开时才画。
+幕自己不画页码（`clock` 幕底部那句「下一幕 · Ns」是幕自己的信息，不是 HUD）。
+
 ## 三、采样：为什么一切都按「时间」节流
 
 `metrics_sample(&M, want_procs)` 只读 `/proc`、`/sys`，**不 fork 子进程**。约定：

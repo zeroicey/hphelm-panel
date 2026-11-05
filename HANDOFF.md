@@ -19,6 +19,44 @@
 
 ---
 
+## 第九轮：多幕（scene）架构 + 轮换（2026-11-05）
+
+**用户口径**（m00046）：「不要一个写死的面板」——把「只有一块屏/一种版面」抽象成**可插拔的多幕**，
+先随便显示几幕 + 特效轮换看效果，并问轮换时间怎么定。
+
+**做了什么**
+
+- 新接口 `src/scene.h`：`scene_t{id,label,draw,sig}`；`draw` 拿到**已 scale** 的 cairo 上下文、
+  底图已铺好（幕不碰 X、不铺底）；`sig` 是幕自己的内容签名。
+- 新调度 `src/scenes.c`：单一参数 `--rotate S`（kiosk 默认 30 s，桌面/锁屏默认 0=不轮换），
+  转场 0.55 s，特效循环 `cut→dip→push→cover`；`scenes_resume()` 在回到面板时打断转场重开计时。
+- 四幕：`panel`（原三列版面，转调 `view_panel_draw`）·`hero`（两行主机 × 四个 80pt 数字）·
+  `clock`（200pt HH:MM + 日期 + 分钟进度线）·`ambient`（近黑，一分钟才重画一次）。
+- `panel.c`：`render()` 改成「幕 → back」；转场时才懒分配 `altpix`（**+8 MiB 仅在人真的看轮换时**）；
+  转场期间 `poll` 超时 500 ms → 30 ms；底部统一小点 HUD（只有轮换开着才画）。
+- 参数/配置：`--scene --rotate --transition --list-scenes`；`/etc/hphelm-panel.conf` 支持
+  `rotate= scene= transition=`（先读文件、再让命令行覆盖）。
+- `Makefile` 加 5 个 obj，模式规则加 `scene.h` 依赖。
+
+**判据（2026-11-05，真机 hpopi5b 已上屏）**
+
+- 构建：真机 `make panel` 零告警（aarch64 / gcc 11）。
+- 真机 `:0`：`probe-frames 60` ⇒ **>30% 变化帧 = 0**；`pgrep -cx hphelm-panel = 1`、`tty0/active = tty1`、
+  日志无 X Error / BadMatch / Segmentation。
+- 轮换确实在跑：间隔 33 s 抓两张帧，`diffpx = 351,706 (17.0%)`（同一幕内不会这样）。
+- 性能（:9 上同条件对比新旧二进制，各 15 s）：**新 4.40% / 旧 4.46%**、RSS 18.2 MiB、线程 1。
+  （`:0` 上量到过 6.7%，那是同时跑 `probe-frames`（每秒 ~15 次 XGetImage 全屏）造成的，不要拿那个数当基线。）
+- 转场：四种特效各跑 7 s 无 X 错误；push 的中间帧确认「A 在左、B 从右露出」。
+- 四幕真机截图逐张看过；`hero` 里 hpopi5b 的 TEMP 显示「—」是**诚实的空态**（Pi 没有可读温度传感器）。
+- 部署落点（真机事实）：源 `/root/hphelm-panel`、二进制 `/usr/local/lib/hphelm-panel/hphelm-panel`
+  （`hphelm-panel.prev` 是 11-03 的 82,176 B 旧版）+ `hphelm-kiosk.service`（xinit 起 Xorg :0 vt1）。
+  ⚠️ 仓库里的 `tools/deploy.sh` 仍指向 hphelm 的 `/usr/local/bin`，**在 hpopi5b 上不能用**。
+
+**下一轮**：让 `tools/deploy.sh` 认出 hpopi5b（路径/服务名），并把 `--rotate` 写进 `/etc/hphelm-panel.conf`
+（当前靠 kiosk 默认 30 s）；按肉眼感受决定 25/30/45。
+
+---
+
 ## 零、先读 `AGENTS.md`
 
 如果你（人或 AI）是来**接手维护**这个项目的：**先读 [`AGENTS.md`](AGENTS.md)** —— 那里有

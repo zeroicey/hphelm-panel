@@ -51,6 +51,16 @@ double v_text_w(PangoFontDescription *fd, const char *s) {
     return (double)r.width / PANGO_SCALE;
 }
 
+/* 字高（用户空间单位）：版式里「下一行放哪」用它，不要拿字号乘系数赌。
+ * 注意返回值含行距（logical extents），一行文本的下一行用它是安全的。 */
+double v_text_h(PangoFontDescription *fd, const char *s) {
+    pango_layout_set_font_description(g_lay, fd);
+    pango_layout_set_text(g_lay, s, -1);
+    PangoRectangle r;
+    pango_layout_get_extents(g_lay, NULL, &r);
+    return (double)r.height / PANGO_SCALE;
+}
+
 /* 排版一次 = 一次 pango 整形。实测一帧要整形 100+ 次（两台主机 + 24 行进程），
  * 每帧 5~10ms ⇒ 1 Hz 重绘就是 0.5~1% of one core。
  * ⚠️ 所以「右对齐/居中」**必须复用这一次排版**去取宽度：

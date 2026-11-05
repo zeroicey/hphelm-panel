@@ -7,7 +7,8 @@ LDLIBS  += $(shell pkg-config --libs $(PKGS)) -lm
 
 BIN  = hphelm-panel
 AUTH = hphelm-auth
-OBJ  = src/panel.o src/metrics.o src/remote.o src/view.o src/view_panel.o src/view_login.o src/auth.o
+OBJ  = src/panel.o src/metrics.o src/remote.o src/view.o src/view_panel.o src/view_login.o src/auth.o \
+       src/scenes.o src/scene_panel.o src/scene_hero.o src/scene_clock.o src/scene_ambient.o
 
 all: $(BIN) $(AUTH)
 
@@ -21,7 +22,7 @@ $(BIN): $(OBJ)
 $(AUTH): src/hphelm-auth.c
 	$(CC) -O2 -Wall -Wextra -o $@ $< -lpam
 
-src/%.o: src/%.c src/metrics.h src/theme.h src/view.h src/remote.h
+src/%.o: src/%.c src/metrics.h src/theme.h src/view.h src/remote.h src/scene.h
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 install: all

@@ -26,7 +26,7 @@ tools/deploy.sh             # 真的部署；桌面会露出 1~2 秒，正常
 部署的完整说明（七个阶段、判据表、三层回滚、六件绝不能做的事）在 **[`docs/deploy.md`](docs/deploy.md)**。
 
 **这个项目是什么**：`hphelm`（机队里常驻工位的那台）的**运维看板 + 自研锁屏**。
-X11 + cairo + pango 纯自绘（无 GUI 工具包），约 1.9k 行 C。
+X11 + cairo + pango 纯自绘（无 GUI 工具包），约 2.1k 行 C。
 行为：空闲→资源面板，动键鼠→登录页，PAM 认证→桌面，再空闲→面板（循环）。
 
 **它不是什么**：不是通用面板、不是产品、不需要「适配更多环境」。
@@ -146,12 +146,14 @@ python3 tools/measure.py assets/panel.png --runs 240 --bands
 | --- | --- | --- |
 | `src/theme.h` | 配色 + 版式常量（逻辑像素）+ 字号 | ⭐ 最常动 |
 | `src/view_panel.c` | 面板版面（三栏 + 进程榜） | ⭐⭐ 改面板只动这里 |
+| `src/scene.h` · `src/scenes.c` | 幕的接口（draw + 自身内容签名）与轮换/转场调度 | ⭐ 改调度只动这里 |
+| `src/scene_*.c` | 四个幕：panel / hero / clock / ambient | ⭐⭐ 加幕就新建一个文件 |
 | `src/view_login.c` | 登录页版面 | ⭐ 改登录页时 |
 | `src/view.c` | 绘制基元（文字/渐变/细线/条/每核柱/sparkline/量程） | 偶尔 |
 | `src/metrics.c` | **本机**数据采集（`/proc`、`/sys`，不 fork） | 加指标时 |
 | `src/remote.[ch]` | **生产服务器**采集（ssh 长连接 + 非阻塞解析 + 退避重连） | 改远端协议时 |
 | `tools/probe-remote.pl` | 喂给被监控机的**只读**探针（从 stdin 进，不落盘到对方） | 加远端指标时 |
-| `src/panel.c` | X11 窗口、事件、状态机、主循环、双缓冲、仪表 | 改交互时 |
+| `src/panel.c` | X11 窗口、事件、状态机、主循环、双缓冲、幕渲染入口、仪表 | 改交互时 |
 | `src/auth.c` + `src/hphelm-auth.c` | 认证（助手是唯一的特权代码，~120 行） | 一般不动 |
 
 ---

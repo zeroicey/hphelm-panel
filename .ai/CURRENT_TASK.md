@@ -2,14 +2,28 @@
 
 <!-- The single live surface. Keep it under ~60 lines: it is read on every session start. -->
 
-**Status:** 🟡 active · **Updated:** 2026-10-21（第七轮）
+**Status:** 🟡 active · **Updated:** 2026-11-05（第九轮：多幕）
 
 ## Goal
 
-面板同屏显示**本机 + 生产服务器（hpcore）**，版面为 `本机 │ 生产 │ 进程榜` 三列。
-第七轮已完成并上真机；下一轮待定（见 Checklist 未勾项）。
+把面板从「一个写死的版面」改成**可插拔的多幕（scene）**：`panel` / `hero` / `clock` /
+`ambient`，kiosk 下默认 30 s 轮换 + 四种转场。桌面/锁屏模式默认不轮换（仍是原面板）。
+**已上真机**（hpopi5b，2026-11-05）：四幕出图、轮换在跑、0 闪帧、CPU 4.40%（旧 4.46%）、RSS 18.2 MiB。
 
-## Checklist
+## Checklist（第九轮）
+
+- [x] `src/scene.h` + `src/scenes.c`（注册表/轮换/转场/内容签名）
+- [x] 四幕：panel / hero / clock / ambient
+- [x] `panel.c` 接幕（render/签名/poll 30 ms/懒分配 altpix/HUD）
+- [x] `--scene --rotate --transition --list-scenes` + 配置文件键
+- [x] `v_text_h()`：版式不再拿字号猜行高
+- [x] 离屏渲染四张 PNG 逐张看过（修掉两处重叠）
+- [x] 真机构建 + `probe-frames`（>30% 变化帧=0）+ CPU 口径
+- [x] 转场视觉实测（push 中间帧确认；四特效无 X 错误）
+- [ ] 定 `--rotate` 最终值（候选 25/30/45）并写进 `/etc/hphelm-panel.conf`
+- [ ] `tools/deploy.sh` 支持 hpopi5b 落点（现在指向 hphelm 的 `/usr/local/bin`）
+
+## Checklist（第七轮）
 
 - [x] `src/remote.[ch]`：ssh 长连接 + 非阻塞行解析 + 半帧不提交 + 退避重连
 - [x] `tools/probe-remote.pl`：远端只读探针（从 stdin 喂入，**不在 hpcore 装任何东西**）

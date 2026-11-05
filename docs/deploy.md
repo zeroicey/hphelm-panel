@@ -33,7 +33,7 @@ ssh hpopi5b 'install -m755 /root/hpopi5b-panel/hpopi5b-panel /usr/local/lib/hpop
 
 判据（数字，别只看「像是对的」）：`systemctl is-active hpopi5b-kiosk` = active ·
 `pgrep -cx hpopi5b-panel` = 1 · `DISPLAY=:0 xrandr --query` 有 `DP-1 ... 1920x1080` 且带 `*` ·
-`DISPLAY=:0 tools/probe-frames 40 20` ⇒ `>30% 变化帧 = 0` · 日志无 X Error。
+`DISPLAY=:0 tools/probe-frames 40 20` ⇒ `>30% 变化帧 = 0`（**kiosk 每 30s 换幕的那 2 帧除外**，见 `verify.md` §二）· 日志无 X Error。
 完整 9 条判据与坑档见 **`kb/runbooks/hphelm-panel.md` §四**（该 runbook 随项目改名另行归档）。
 
 > **历史（2026-10-21，hphelm 时代，已失效）**：`tools/deploy.sh` 是「本机原地七阶段部署」，落点
@@ -215,7 +215,7 @@ EOF
 | 3 | `pgrep -cx hpopi5b-panel` | `1` | `0` 守护循环死了；`2` 单实例锁失效（会互相抢抬窗） |
 | 4 | `md5sum ./hpopi5b-panel /usr/local/bin/hpopi5b-panel` | 一致 | 装错版本（或装到别处） |
 | 5 | `./hpopi5b-panel --dump \| tail -1` | 含 `sleep_off=off` | 默认值/判据被改回去了（#16） |
-| 6 | `DISPLAY=:0 tools/probe-frames 40` | `>30% 变化帧 = 0` | 有闪 ⇒ 双缓冲被绕过了 |
+| 6 | `DISPLAY=:0 tools/probe-frames 40` | `>30% 变化帧 = 0`（换幕帧除外） | 有闪 ⇒ 双缓冲被绕过了 |
 | 7 | CPU（`/proc/<pid>/stat` 的 14/15 字段，20 秒窗口） | < 1% of one core | 见第七节末尾「已知偏差」 |
 | 8 | `tail -3 /tmp/hpopi5b-panel.log` | `rc=143` = 我们主动重启（正常）；**不能出现**当前实例的「连续 3 次」 | 出现 ⇒ 面板在反复崩，兜底已经关屏 |
 

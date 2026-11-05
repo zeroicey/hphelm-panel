@@ -2,7 +2,7 @@
 
 <!-- The single live surface. Keep it under ~60 lines: it is read on every session start. -->
 
-**Status:** 🟡 第十二轮源码已改完、真机未验收（第 4 格曲线温度 → 磁盘 I/O）· **Updated:** 2026-11-05
+**Status:** 🟢 第十二轮已真机验收并部署（第 4 格曲线温度 → 磁盘 I/O）· **Updated:** 2026-11-05
 
 ## Goal
 
@@ -12,8 +12,7 @@
 
 ## Checklist
 
-- [ ] **第十二轮真机验收**：hpcmd 缺 `X11/extensions/scrnsaver.h` 且无 make ⇒ 只能在 hpopi5b 上
-      `make panel` + `tools/deploy.sh`，`metrics.h` 结构改过必须整体重建；判据见 Code state
+- [x] **第十二轮真机验收**（hpopi5b `make panel` 0 warning + 安装 + 重启 + 取证，数字见 Code state）
 - [ ] 定 `--rotate` 最终值（候选 25/30/45）并写进 `/etc/hpopi5b-panel.conf`
 - [ ] `tools/deploy.sh` 支持 hpopi5b 落点（现在仍指向 hphelm 的 `/usr/local/bin`）
 - [ ] CPU 预算收口（见 Blockers，二选一）
@@ -21,11 +20,14 @@
 
 ## Code state
 
-`main` · **第九轮（多幕）已提交并部署**；第十二轮（磁盘 I/O 曲线）**源码已改、未部署**。
-现场（2026-11-05）：`hpopi5b-kiosk` active · `pgrep -cx hpopi5b-panel` = 1 · `tty1` active ·
-两幕 30s 轮换 · 帧差分 `0` 帧 >30% · 两个远程列各 1 个 `ssh … perl -`。
-本轮已验（离屏）：`-Wall -Wextra` 零告警；PPM 量测 4 格/列、`ch=87.4`、余 `0.0`、I/O 两色都在（日/夜主题）、
-磁盘行与脚注无重叠；`probe-remote.pl` 实跑 33 字段。真机判据待跑：CPU / RSS / 无闪帧 / `pgrep -cx`。
+`main` · **第十二轮（磁盘 I/O 曲线）已提交、部署到 hpopi5b**（`addaa03`）。
+现场（2026-11-05 16:00）：`hpopi5b-kiosk` active · `pgrep -cx hpopi5b-panel` = 1 · `tty1` active ·
+两幕 30s 轮换 · 日志「已连上 hpcmd 4 核 / hpcore 16 核」· X Error 0。
+本轮判据：`make panel` **0 warning**；截图取证第 4 格满宽双曲线（peach 写横跨 x 26..659）+ 磁盘行
+teal「读」/peach「写」+ 脚注「盘 读/写」；**CPU A/B（Xvfb :9，各 25s，交替两轮）旧 5.12/5.08% → 新 5.52/5.40%
+⇒ +0.35 pp**；RSS 17940 → 18008 kB（噪声内）。
+注意：`probe-frames` 在 kiosk 下会数到换幕的 2 帧 100%（不是闪）——
+见 `.ai/pitfalls/cases/2026-11-05-probe-frames-vs-scene-rotation.md`，干净数用 `--rotate 0`。
 第七轮到第十二轮的逐轮过程记录在 `.ai/sessions/2026-11-05-rounds-7-to-12-handoff.md`。
 
 ## Constraints
@@ -41,7 +43,6 @@
 
 ## Blockers
 
-- 第十二轮真机验收未做 — waiting on 一次 `make panel` + `tools/deploy.sh`（hpcmd 上做不了）
 - CPU 1.0~1.4% 略超预算 — waiting on owner 二选一：接受并改文档预算，或做区域局部重绘
   （动手前必须在**空闲**机器上量基线，先读
   `.ai/pitfalls/cases/2026-10-21-benchmarking-cpu-under-foreign-load.md`）
@@ -62,6 +63,5 @@
 
 ## Next action
 
-1. 在 hpopi5b 上 `make panel && tools/deploy.sh`，跑第十二轮的判据（CPU / RSS / 无闪帧 / `pgrep -cx`），
-   把数字记进 `.ai/sessions/` 与 Code state。
-2. 验收通过后再谈 CPU：先把「接受 1.0~1.4% 并改预算」与「区域局部重绘」两个选项连同实测数字交给 owner。
+1. 把「接受 1.4~1.5% 并改预算」与「区域局部重绘」两个选项连同本轮 A/B 数字（+0.35 pp）交给 owner 二选一。
+2. 定 `--rotate` 最终值；`tools/deploy.sh` 改成支持 hpopi5b 落点（现在仍指向 hphelm 的 `/usr/local/bin`）。

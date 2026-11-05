@@ -112,7 +112,7 @@ README 的「这不是给谁用的」那张表就是**设计边界**——不要
 它跑不了时（或你要单跑某项）用下列命令：
 
 ```sh
-# ① 不闪：抓窗口连续帧，>30% 像素变化的帧必须是 0
+# ① 不闪：抓窗口连续帧，>30% 像素变化的帧必须是 0（kiosk 每 30s 换幕那 2 帧除外）
 DISPLAY=:0 tools/probe-frames 60
 # ② 主循环正常：2 it/s、poll 全是超时、事件 0
 HPOPI5B_PANEL_DEBUG=1 ./hpopi5b-panel --state panel --lock /tmp/x.lock   # 每秒一行

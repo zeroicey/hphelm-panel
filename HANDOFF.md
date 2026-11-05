@@ -60,13 +60,32 @@
   - 文字无重叠：磁盘行整行墨迹 0.7→285 逻辑 px，脚注到右对齐「压力」还有 **93 逻辑 px** 空隙。
 - 探针：`perl -c` OK；在 hpcmd 实跑输出 **33 字段**（尾部出现 `.8M/s` 写速率），`tempC = -1.0` 也印证了没有 hwmon。
 
-**没验的（必须在 hpopi5b 上补）**：CPU / RSS 判据 —— hpcmd 编不了 `panel.c`（缺
-`X11/extensions/scrnsaver.h`、无 make），只能到真机 `make panel` + `tools/deploy.sh`。
-估计增幅 < 0.1%（每秒多读 5 个小文件，page cache 命中；每帧多一条 sparkline 描边）。
-⚠️ 改 `metrics.h` 结构 ⇒ 真机必须**整体重建**（`make panel`），不能只换二进制与源码里的旧目标文件混链。
+**真机判据（hpopi5b，按 `docs/deploy.md` 三十秒版，2026-11-05）**
+
+- 构建：`make panel`（aarch64，本地编）**0 warning**；备份 `hpopi5b-panel.prev` 102272 B +
+  `probe-remote.pl.prev` 10132 B；`systemctl restart hpopi5b-kiosk` ⇒ `is-active` active、
+  `pgrep -cx hpopi5b-panel` = **1**、日志「已连上（hpcmd 4 核 / hpcore 16 核）」、
+  `grep -cE "X Error|Segmentation"` = **0**。
+- **屏幕取证**（Pi 上 `XGetImage` → PPM → stdlib 分析）：第 4 格已是**满宽双曲线**（peach 写曲线
+  横跨 x 26..659，teal 读曲线有尖峰），磁盘行 =「`磁盘 6% 剩 …` + teal `读 0B` + peach `写 988B`」，
+  脚注 =「盘 读 …G 写 …G」；两列都对位（磁盘行 y 967-991、条 997-1009、脚注 1027-1049，无重叠）。
+- **「读≈0」是真实的**，不是解析 bug：hpcore/Pi 的 `/sys/block/*/stat` 5 秒内**读扇区一动不动**、
+  只有写扇区在涨（读全走 page cache）。
+- **CPU（Xvfb :9 同条件 A/B，各 25s 窗口，交替两轮）**：旧 5.12/5.08% → 新 5.52/5.40%
+  ⇒ **+0.35 pp（约 3.5 ms/s，+7% 相对）**；RSS 17940 → 17908~18008 kB（噪声内）。
+  代价来自「每秒多读 5 个 `/sys/block` 小文件 + 每帧多一条 sparkline 描边」，与估计一致。
+- ⚠️ 改 `metrics.h` 结构 ⇒ 真机必须**整体重建**（`make panel`），不能只换二进制跟旧目标文件混链。
+
+**判据坑（已修文档）**：kiosk 每 30s 换幕，那 2 帧必然 100% 像素变化 —— 直接套
+「`probe-frames` >30% 帧必须 0」会把换幕判成闪（同一条命令连跑三次：2 / 0 / 3）。
+已在 `docs/verify.md` §二、`docs/deploy.md`（三十秒版 + 九条判据表）、`AGENTS.md` 括注
+「换幕帧除外 / 用 `--rotate 0` 的隔离实例量」，记忆库
+`.ai/pitfalls/cases/2026-11-05-probe-frames-vs-scene-rotation.md`。
 
 **踩的坑**：离屏 harness 首次出图**全黑** —— 忘了 `theme_set()`，`TP` 调色板全 0（黑底画黑字）。
 记进 `.ai/pitfalls/cases/2026-11-05-offscreen-harness-all-black.md`（含「红矩形对照」判据与完整编译命令）。
+另：`pkill -f "Xvfb :9"` 又一次把执行它的 shell 自己杀掉（第 6 次）—— 用 `pgrep -x` + 按
+`/proc/<pid>/cmdline` 挑 pid。
 
 **文档**：`README`（面板能力表 + 数据源）、`docs/design.md`（版面 ASCII、四张曲线清单、色语义）、
 `docs/architecture.md`（温度只有文本 / 磁盘扫所有整盘）、`.ai/decisions/2026-11-05-chart-slot-disk-io.md`。

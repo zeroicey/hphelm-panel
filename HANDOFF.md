@@ -7,7 +7,8 @@
 >
 > **上一轮（第六轮：交接与部署链本土化，2026-10-21）**：`tools/deploy.sh` 从「rsync 到 hphelm
 > 再 ssh 上去」改成**本机原地部署**（旧路径在本机必失败）+ 七阶段判据；`docs/deploy.md`
-> 重写成「更新系统屏保」runbook；项目记忆库 **`.ai/`** 由 engram v0.5.0 初始化并填入内容。
+> 重写成「更新系统屏保」runbook；项目记忆库 **`.ai/`** 由 engram v0.5.0 初始化并填入内容（0.5 是当时的版本；现用 0.6.x，命令换成
+> `npx -y @zeroicey/engram@0.6`）。
 >
 > **项目现在的形态**：源码目录 = 部署目录 = **`hphelm:/data/dev/hpopi5b-panel`**（2026-10-19 整仓迁入），
 > 公开镜像 `github.com/zeroicey/hpopi5b-panel`。
@@ -337,7 +338,7 @@ lightdm+bspwm+picom、专用 PAM 服务、会话包装器、三条运维红线�
 | **部署链本土化** | `tools/deploy.sh` 重写：**去掉 rsync 与 `ssh hphelm`**，改成七阶段原地部署（自检 → 构建 → 备份旧二进制 → 安装+校验 → `--dump` 语义自检 → 重启并确认 pid 变化 → 判据）。新增 `--check` / `--no-restart` | 本机三次真跑全过：VT=tty7 · greeter=0 · 面板=1 · 源码⇄已装逐字节一致 · 助手 `4755 root:root` · `sleep_off=off` · 帧差分 `0` 帧 >30% |
 | **回滚有凭据了** | 安装前若内容不同 ⇒ 自动留 `/usr/local/bin/hpopi5b-panel.prev` | 文档给出「三层回滚」（二进制 / 系统文件 / 退回 lightdm greeter） |
 | **`docs/deploy.md` 重写** | 从「rsync 到另一台机」改成 **「更新系统屏保」runbook**：屏保到底是什么 · 文件清单 · 开发循环 · 七阶段 · 判据表 · 三层回滚 · 六件绝不能做的事 · 交付清单 | 全文 10 节，命令均可直接粘贴 |
-| **项目记忆库 `.ai/`** | engram v0.5.0（本地构建 `/data/dev/engram/build/src/cli.js`）`init --root /data/dev/hpopi5b-panel --notes "…"` ⇒ `.ai/` + `.engram/` + `.agents/skills`，契约追加进 `AGENTS.md`（原有正文保留） | `engram doctor` / `engram dump` 通过；`.ai/CURRENT_TASK.md` · `ARCHITECTURE.md` · `runbooks/update-screensaver.md` · `decisions/` · `sessions/` 已填真实内容 |
+| **项目记忆库 `.ai/`** | engram v0.5.0（当时的本地构建 `/data/dev/engram/build/src/cli.js`；**该路径已不存在**，0.6 起用 `npx -y @zeroicey/engram@0.6`）`init --root /data/dev/hpopi5b-panel --notes "…"` ⇒ `.ai/` + `.engram/` + `.agents/skills`，契约追加进 `AGENTS.md`（原有正文保留） | `engram doctor` / `engram dump` 通过；`.ai/CURRENT_TASK.md` · `ARCHITECTURE.md` · `runbooks/update-screensaver.md` · `decisions/` · `sessions/` 已填真实内容 |
 | **文档纠偏** | `AGENTS.md` §0/§4/§8/§9 与本文 §一：删掉「源码在 hpcore、部署到 hphelm」的旧事实；新增「接手第一小时读什么」 | — |
 
 **本轮我自己在 deploy.sh 第一版里踩的三个坑（都不报错，都已修）：**

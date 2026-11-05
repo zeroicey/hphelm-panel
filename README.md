@@ -229,9 +229,9 @@ docs/               架构 / 设计 / 验证 / 坑 / 部署
 
 ## 相关
 
-- 机队视角的运维记录（部署位置、VT 守卫、红线）：`kb` 仓库的 `runbooks/hphelm.md`
-  「运维面板（hpopi5b-panel）」节（kb 主副本在 `hphelm:/data/kb`）。**那是机队事实的权威来源**，
-  本项目文档负责代码与设计。
+- 机队视角的运维记录（部署位置、VT 守卫、红线）：`kb` 仓库的 `runbooks/hpopi5b-panel.md`
+  （本机副本 `/data/kb`，主副本在 `hphelm:/data/kb`；旧形态散在 `runbooks/hphelm.md` 的「运维面板」节）。
+  **那是机队事实的权威来源**，本项目文档负责代码与设计。
 - 项目记忆库：`.ai/`（`engram dump` 出 ≤1.5 KB 会话指纹；`engram doctor` 查漂移）。
 
 ## 真实可移植的做法

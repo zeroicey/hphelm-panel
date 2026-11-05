@@ -2,108 +2,49 @@
 
 <!-- The single live surface. Keep it under ~60 lines: it is read on every session start. -->
 
-**Status:** 🟢 active · **Updated:** 2026-11-05（第十二轮：第 4 格曲线换成磁盘 I/O，待真机验收）
-
-## 第十二轮：第 4 格曲线 = 磁盘 I/O（2026-11-05）
-
-- 用户报障（m00001）：hpcmd 列「磁盘上方那条折线」不显示，hpcore 有 —— 那不是磁盘曲线，是**温度**；
-  两处读取端都只认 `hwmon name == k10temp`，hpcmd 是 KVM guest（`/sys/class/hwmon` 空）、Pi 是 `soc_thermal`
-  ⇒ 三列里只有 hpcore 画得出。用户裁决「可以」（m00071）。
-- 已改完（源码）：第 4 格 → 磁盘 I/O 双曲线（teal 读 / peach 写，共享量程）；磁盘行右侧显示当前速率，
-  盘累计 GB 挪脚注；`read_disk()` 改扫 `/sys/block` 所有整盘（跳 loop/ram/zram/nbd/sr/fd/dm-/mtdblock）；
-  探针尾部追加 `diskReadBps diskWriteBps`；`remote.c` 补全整个追加段解析（此前缓存/PSI/线程/累计/丢错**恒为 0**）；
-  字段 `have_ssd/ssd_*` → `have_disk/disk_*`。
-- 已验：`-Wall -Wextra` 零告警；离屏 PPM 量测 4 格/列、`ch=87.4`、余 0.0、I/O 格两色都在（日/夜主题）、
-  磁盘行与脚注无重叠；`probe-remote.pl` 实跑 33 字段。
-- **未验（下一步）**：真机 `make panel` + `tools/deploy.sh`（hpcmd 缺 `X11/extensions/scrnsaver.h`、无 make，
-  编不了 `panel.c`）⇒ CPU / RSS / 无闪帧 / `pgrep -cx` 判据；`metrics.h` 改了结构，必须整体重建。
-- 已知取舍：I/O 双曲线共享量程 ⇒「写≪读」时写曲线贴基线（与网络 ↓/↑ 同规矩）。若用户嫌不明显，
-  可考虑写曲线单独量程（会失去同量纲对比）。
-
-## 第十轮：改名与落点（2026-11-05）
-
-- 用户裁决：项目 `hphelm-panel` → **`hpopi5b-panel`**，并归位到 **`/data/dev/project/`**（顶层只留分类目录）。
-- **改名范围**：项目目录 / GitHub 仓库 / 二进制 / 安装路径 / 配置 / 日志 / 锁 / systemd 单元；
-  纯历史 `hphelm`（旧工位机）称谓与已废弃的 `hphelm-session`/`hphelm-vt-guard` 保持原样，不改写成假历史。
-- **生产端已同步**（hpopi5b）：`/usr/local/lib/hpopi5b-panel/` · `/usr/local/bin/hpopi5b-kiosk` ·
-  `/usr/local/share/hpopi5b-panel/probe-remote.pl` · `/etc/hpopi5b-panel.conf` · `/var/log/hpopi5b-panel.log` ·
-  `/var/cache/hpopi5b-panel/` · 单元 `hpopi5b-kiosk.service` + `hpopi5b-trending.{service,timer}`。
-- **推送通路已恢复**（hpcmd 的 `gh auth` 可用，HTTPS push 成功）；旧的「本机推送失败、先不管」作废。
-
-## 第十一轮：生产迁移与验收（2026-11-05 同日）
-
-- 项目改名后**已在真机完成迁移**（hpopi5b）：`make panel` 重建 102272 B → `/usr/local/lib/hpopi5b-panel/`，
-  探针、`hpopi5b-kiosk` 启动脚本（已收回仓库 `systemd/hpopi5b-kiosk.sh`）、conf、logrotate、`/var/cache/hpopi5b-panel/`、
-  新单元全部就位；`disable --now` 旧 `hphelm-{kiosk,trending}` → `enable --now` 新单元。
-- 备份 `/root/backup-rename-20261105/`；**旧二进制目录 + 旧单元文件保留未删**（已 disable、`is-active` inactive），回滚可用。
-- 验收集：
-  - `pgrep -cx hpopi5b-panel` = 1（旧名 0）· 两远程 `已连上（hpcore 16 核/4581 进程、hpcmd 4 核/238 进程）`
-  - `xrandr` `DP-1 1920x1080+0+0 *`（HDMI-1 disconnected）
-  - `probe-frames 40 20` ⇒ 变化 >30% 的帧 **0**
-  - 日志 `X Error|Segmentation` **0** · CPU 5.7% / RSS 17956 KB / 1 线程
-  - `hpopi5b-trending.timer` 14:56 首次跑通：`16 条 → /var/cache/hpopi5b-panel/trending.tsv (daily)`，下次 17:56
-- 真机源码实测 **4008 行 C/H**（旧文档的 3054 是两幕之前的数）。
-- 同日收尾（用户「生产也更新 2 根治」）：
-  - 生产旧名残留已清（旧目录/conf/logrotate/cache/lock/旧单元），旧日志并入备份；`grep -rl hphelm /etc /usr/local` 0 命中，kiosk 仍 active。
-  - `ssh hpopi5b` 根治：真因是 `~/.ssh/hpopi5b` 的**公钥没进 Pi `authorized_keys`**（钥文件一直在）；追加后裸 ssh 通，config 未改。
-  - ⚠️ 回滚现只靠 `/root/backup-rename-20261105/`（旧产物已删）。
+**Status:** 🟡 第十二轮源码已改完、真机未验收（第 4 格曲线温度 → 磁盘 I/O）· **Updated:** 2026-11-05
 
 ## Goal
 
 把面板从「一个写死的版面」改成**可插拔的多幕（scene）**，目前**只保留两幕**：`panel`（运维面板）+
 `trending`（GitHub 趋势，两列 12 条），kiosk 下默认 30 s 轮换 + 四种转场。桌面/锁屏模式默认不轮换。
-**已上真机**（hpopi5b，2026-11-05）：两幕轮换在跑、0 闪帧、trending 两列实拍确认、HUD 两点。
+两幕已在真机跑通（两幕轮换、0 闪帧、trending 两列实拍、HUD 两点）；本轮改的是第 4 格的曲线来源。
 
-## Checklist（第九轮）
+## Checklist
 
-- [x] `src/scene.h` + `src/scenes.c`（注册表/轮换/转场/内容签名）
-- [x] 两幕：panel / trending（hero/clock/ambient 已按用户要求撤掉）
-- [x] `panel.c` 接幕（render/签名/poll 30 ms/懒分配 altpix/HUD）
-- [x] `--scene --rotate --transition --list-scenes` + 配置文件键
-- [x] `v_text_h()`：版式不再拿字号猜行高
-- [x] `trending` 幕 + `tools/fetch-trending.py` + `hpopi5b-trending.timer`（3h）
-- [x] 真机 enabled，列表/涨星/总数/HUD 实拍确认
-- [x] trending 两列 12 条 + 描述 13pt / 仓库名 14pt（`F_DESC`），离屏与真机都看过
-- [x] 撤幕：删除 scene_hero/clock/ambient，`--scene` 只剩 panel|trending
-- [x] 白天/夜间主题（07:00/19:00 自动切，淡出→换色→淡入 0.9s；`theme=`/`theme_day=`/`theme_night=` + `--theme*`）
-- [x] 两幕 × 两主题离屏与真机实拍；自动切换用近时刻实测亮度曲线（237→6→21）
-- [x] 真机构建 + `probe-frames`（>30% 变化帧=0）+ CPU 口径
-- [x] 转场视觉实测（push 中间帧确认；四特效无 X 错误）
+- [ ] **第十二轮真机验收**：hpcmd 缺 `X11/extensions/scrnsaver.h` 且无 make ⇒ 只能在 hpopi5b 上
+      `make panel` + `tools/deploy.sh`，`metrics.h` 结构改过必须整体重建；判据见 Code state
 - [ ] 定 `--rotate` 最终值（候选 25/30/45）并写进 `/etc/hpopi5b-panel.conf`
-- [ ] `tools/deploy.sh` 支持 hpopi5b 落点（现在指向 hphelm 的 `/usr/local/bin`）
-
-## Checklist（第七轮）
-
-- [x] `src/remote.[ch]`：ssh 长连接 + 非阻塞行解析 + 半帧不提交 + 退避重连
-- [x] `tools/probe-remote.pl`：远端只读探针（从 stdin 喂入，**不在 hpcore 装任何东西**）
-- [x] 三列版式（`theme.h` 绝对逻辑像素 + `draw_host()` 画两台 + 进程榜一列两段）
-- [x] `/etc/hpopi5b-panel.conf` 的 `remote=`（改主机名不用编辑 root 的会话包装器）
-- [x] `tools/deploy.sh` 安装并校验探针 + `HPOPI5B_REMOTE=` 时顺带验链路
-- [x] 性能：右对齐复用排版、背景渐变只渲染一次、等宽字体按字符宽截断
-- [x] 真机判据全绿（tty7 / greeter=0 / panel=1 / 帧差分 0 / 日志无兜底）
-- [x] 版面精细化（圆点对齐墨迹中线 / 每块一行 / 曲线均分剩余高度 / 新增 7 项指标）
-- [x] 修复「远程采集连上但没数据 ⇒ 永久离线」（真机踩到，见 #20/#21 坑档）
-- [x] 远程采集加**状态变迁日志**（拉起/已连上/EOF/退出/超时重连）
-- [ ] **CPU 仍略超预算**：只本机 ~1.0%、含生产 ~1.4%（预算 <1%）— 见 Blockers
+- [ ] `tools/deploy.sh` 支持 hpopi5b 落点（现在仍指向 hphelm 的 `/usr/local/bin`）
+- [ ] CPU 预算收口（见 Blockers，二选一）
 - [ ] 容器**健康**（重启循环/备份/证书）还没做，现在只有「容器 N 个」
-- [x] GitHub 推送通路（2026-11-05 在 hpcmd 上恢复，push 成功）
 
 ## Code state
 
-`main` · 第九轮（多幕）已提交并部署到 hpopi5b。
+`main` · **第九轮（多幕）已提交并部署**；第十二轮（磁盘 I/O 曲线）**源码已改、未部署**。
 现场（2026-11-05）：`hpopi5b-kiosk` active · `pgrep -cx hpopi5b-panel` = 1 · `tty1` active ·
 两幕 30s 轮换 · 帧差分 `0` 帧 >30% · 两个远程列各 1 个 `ssh … perl -`。
+本轮已验（离屏）：`-Wall -Wextra` 零告警；PPM 量测 4 格/列、`ch=87.4`、余 `0.0`、I/O 两色都在（日/夜主题）、
+磁盘行与脚注无重叠；`probe-remote.pl` 实跑 33 字段。真机判据待跑：CPU / RSS / 无闪帧 / `pgrep -cx`。
+第七轮到第十二轮的逐轮过程记录在 `.ai/sessions/2026-11-05-rounds-7-to-12-handoff.md`。
+
+## Constraints
+
+边界，不是阻塞项：决定改法，但没人在等它们。
+
+- **CPU 预算 <1% of one core**，现 1.0%（1 台）/ 1.4%（2 台）。内容签名已做到「没变就不画」，
+  但时钟每秒变 ⇒ 每秒必画一帧；再降只有「降频重绘」或「区域局部重绘」两条路，其余是白费。
+- **I/O 双曲线共享量程**：「写 ≪ 读」时写曲线贴基线（与网络 ↓/↑ 同规矩）。要单独量程就会失去同量纲对比。
+- **hpcmd 编不了 `panel.c`**（KVM guest：`/sys/class/hwmon` 空、无 make、缺 scrnsaver.h）⇒
+  编译与验收都在 hpopi5b 上做，hpcmd 只做源码编辑与 ssh 远端探针。
+- **测试实例与真机实例同名** ⇒ 杀进程按 `/proc/<pid>/environ` 的 `DISPLAY` 挑 pid，永不 `pkill -f`。
 
 ## Blockers
 
-- **CPU 1.0%（1 台）/ 1.4%（2 台）of one core，预算 <1%**。
-  已定位到「单帧绘制 5~10ms × 1 Hz」，并修掉三个大头（pango 整形次数、整屏渐变、逐字符测量）。
-  要进一步降只有两条路：**降低重绘频率**（内容签名已经是「没变就不画」，但时钟每秒变 ⇒ 每秒必画一次）
-  或**区域局部重绘**（只重画变化的区块）。⚠️ 再优化前先读
-  `.ai/pitfalls/cases/2026-10-21-benchmarking-cpu-under-foreign-load.md`：
-  上一次量 CPU 时机器 load 23，数字全部作废。
-- `git push origin main` 在本机失败（hphelm 的 GitHub 身份只够推 `dotfiles`）—
-  用户 2026-10-21 裁决「先不管，提交留本地」⇒ 别为此改动仓库配置。
+- 第十二轮真机验收未做 — waiting on 一次 `make panel` + `tools/deploy.sh`（hpcmd 上做不了）
+- CPU 1.0~1.4% 略超预算 — waiting on owner 二选一：接受并改文档预算，或做区域局部重绘
+  （动手前必须在**空闲**机器上量基线，先读
+  `.ai/pitfalls/cases/2026-10-21-benchmarking-cpu-under-foreign-load.md`）
 
 ## Pitfall reminders for the current branch
 
@@ -112,7 +53,6 @@
 - #17 **量 CPU 必须同时报 load average 与窗口长度**，优化前后要同窗口交替对比
 - #18 加宽/加列后必须重跑 `--bands` 量竖带起点；`-1` 不要兼职两种语义；UTF-8 截断别切半
 - #19 外部脚本读 `--dump` 一律按前缀 grep，不要依赖行序（`tail -1` 已经坑过一次）
-- 测试实例与真机实例同名 ⇒ **杀进程按 `/proc/<pid>/environ` 里的 `DISPLAY` 挑 pid**，永不 `pkill -f`
 
 ## Layout invariants（改版面时必看）
 
@@ -122,6 +62,6 @@
 
 ## Next action
 
-（上一轮遗留）先决定 CPU 这一项怎么收：**（a）接受 1.0~1.4% 并改文档预算**（面板已经比 conky 便宜得多），
-或**（b）做区域局部重绘**（只重画时钟/数字所在的行，预计能砍掉一半）。
-动手前先在**空闲的机器上**（`uptime` 的 load < nproc/2）量一次基线，把数字记进 HANDOFF。
+1. 在 hpopi5b 上 `make panel && tools/deploy.sh`，跑第十二轮的判据（CPU / RSS / 无闪帧 / `pgrep -cx`），
+   把数字记进 `.ai/sessions/` 与 Code state。
+2. 验收通过后再谈 CPU：先把「接受 1.0~1.4% 并改预算」与「区域局部重绘」两个选项连同实测数字交给 owner。

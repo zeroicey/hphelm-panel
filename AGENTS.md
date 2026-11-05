@@ -205,8 +205,8 @@ python3 tools/measure.py assets/panel.png --runs 240 --bands
 | 会话入口 | `/usr/local/bin/hphelm-session`（守护循环 + 日志轮转） |
 | 运行日志 | `/tmp/hpopi5b-panel.log`（会话启动时按大小轮转） |
 | PAM 服务 | `/etc/pam.d/hpopi5b-auth`（**专用**，只留 `pam_unix`） |
-| 机队事实权威 | `kb` 的 `runbooks/hphelm.md`「运维面板（hpopi5b-panel）」节（kb 主副本也在 hphelm：`/data/kb`） |
-| 项目记忆库 | `.ai/`（engram v0.5.0 初始化于 2026-10-21）· `engram dump` 出 ≤1.5 KB 指纹 |
+| 机队事实权威 | `kb` 的 `runbooks/hpopi5b-panel.md`（本机副本 `/data/kb`，主副本在 hphelm；旧内容散在 `runbooks/hphelm.md` 的「运维面板」节） |
+| 项目记忆库 | `.ai/`（engram 初始化于 2026-10-21，现用 0.6.x：`npx -y @zeroicey/engram@0.6`）· `engram dump` 出 ≤1.5 KB 指纹 · `engram sync --check` 是 CI 闸 |
 
 <!-- engram:managed -->
 

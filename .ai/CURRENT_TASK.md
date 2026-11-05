@@ -17,6 +17,8 @@
 - [x] `panel.c` 接幕（render/签名/poll 30 ms/懒分配 altpix/HUD）
 - [x] `--scene --rotate --transition --list-scenes` + 配置文件键
 - [x] `v_text_h()`：版式不再拿字号猜行高
+- [x] `trending` 幕 + `tools/fetch-trending.py` + `hphelm-trending.timer`（3h）
+- [x] 真机 enabled，列表/涨星/总数/HUD 实拍确认
 - [x] 离屏渲染四张 PNG 逐张看过（修掉两处重叠）
 - [x] 真机构建 + `probe-frames`（>30% 变化帧=0）+ CPU 口径
 - [x] 转场视觉实测（push 中间帧确认；四特效无 X 错误）

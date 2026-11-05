@@ -52,7 +52,20 @@
   （`hphelm-panel.prev` 是 11-03 的 82,176 B 旧版）+ `hphelm-kiosk.service`（xinit 起 Xorg :0 vt1）。
   ⚠️ 仓库里的 `tools/deploy.sh` 仍指向 hphelm 的 `/usr/local/bin`，**在 hpopi5b 上不能用**。
 
-**下一轮**：让 `tools/deploy.sh` 认出 hpopi5b（路径/服务名），并把 `--rotate` 写进 `/etc/hphelm-panel.conf`
+**追加（同日）：`trending` 幕（GitHub 趋势）**
+
+- 已确认：GitHub **没有 trending API**（`/search/repositories?q=created:>…` 是「新建仓库涨星」，
+  看不见老仓库翻红）。所以抓 `github.com/trending?since=daily` 的 HTML（Pi 直连 200，16 条）。
+- `tools/fetch-trending.py`：urllib + regex → TSV，**原子替换**（`os.replace`），去 HTML 标签/实体/emoji；
+  抓不到返回非 0 ⇒ systemd 记失败，缓存保留上一份。
+- `scene_trending.c`：只读缓存，`stat` 比对 mtime/size 才重读；sig 混入「分钟」（相对时间要更新）；
+  按真实像素宽截断（`v_text_h` 同款思路：CJK 不能按字符数算宽）；总数 `313,652 → 313.7k`。
+  空态写「还没同步 + 该跑哪个 service」，**不放假数据**。
+- `systemd/hphelm-trending.timer`：`OnBootSec=2min` + `OnUnitActiveSec=3h`（日榜一天只抓一次太旧）。
+- 真机：timer 已 enable，首次抓取 16 条；转场轮到第 3 幕时实拍确认列表/涨星/总数/HUD 全部正确。
+- 踩到：`atol("313,652")` 在逗号处停下 ⇒ 总数全变成「313★」。**千分位字符串不要直接 atol**。
+
+**下一轮**：让 `tools/deploy.sh` 认出 hpopi5b（路径/服务名 + 安装 `fetch-trending.py` 与 timer），并把 `--rotate` 写进 `/etc/hphelm-panel.conf`
 （当前靠 kiosk 默认 30 s）；按肉眼感受决定 25/30/45。
 
 ---

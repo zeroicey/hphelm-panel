@@ -151,9 +151,15 @@ HPHELM_PANEL_DEBUG=1 …            # 主循环仪表：it/s · poll 结果 · �
 
 ### 多幕（一块屏不只显示一种东西）
 
-面板是**幕**的一个实现：`panel`（三列密排）· `hero`（远看大字）· `clock`（钟/日期）·
-`ambient`（近黑环境）。`--kiosk` 下默认每 **30 s** 换一幕、四种转场（cut/dip/push/cover）
+面板是**幕**的一个实现：`panel`（三列密排）· `hero`（远看大字）· `trending`（GitHub 趋势）·
+`clock`（钟/日期）· `ambient`（近黑环境）。`--kiosk` 下默认每 **30 s** 换一幕、四种转场（cut/dip/push/cover）
 轮流用；桌面/锁屏模式默认**不轮换**（还是你熟悉的那个面板）。
+
+`trending` 的数据**不是 API**：GitHub 的 trending 只存在于网页里（官方没有接口），
+所以由 `tools/fetch-trending.py` 抓 `github.com/trending?since=daily` 解析成 TSV，存到
+`/var/cache/hphelm-panel/trending.tsv`，面板**只读这个文件**。`hphelm-trending.timer` 每 3 小时跑一次
+（`OnUnitActiveSec=3h`，开机 2 分钟后先跑一次）；抓不到就保留上一份，**网络故障不影响渲染**。
+换榜单：改 `systemd/hphelm-trending.service` 的 `ExecStart` 追加 `--since weekly` 或 `--language rust`。
 
 轮换间隔只有一个数 `--rotate`（或 `/etc/hphelm-panel.conf` 的 `rotate=`）：30 s 的来历是
 「密排面板抬头到看完约 8~12 s，留 2~3 倍余量」；4 幕 × 30 s = 2 分钟一圈，再长值班的人会漏掉
@@ -186,6 +192,9 @@ src/scene_panel.c   幕「运维面板」（转调 view_panel.c）
 src/scene_hero.c    幕「远看版」（两行主机 × 四个巨大数字）
 src/scene_clock.c   幕「钟与日期」（200pt 级 HH:MM + 分钟进度线）
 src/scene_ambient.c 幕「环境」（几乎全暗，一分钟重画一次）
+src/scene_trending.c 幕「GitHub 趋势」（只读缓存 TSV，缺文件时给空态）
+tools/fetch-trending.py GitHub Trending 抓取器（无依赖，python3）
+systemd/        hphelm-trending.{service,timer}（每 3 小时同步一次榜单）
 src/auth.[ch]       与 setuid 助手通信（密码只走 stdin）
 src/hphelm-auth.c   唯一的特权代码：setuid root，调 PAM 验一次密码
 src/panel.c         X11 窗口、事件、状态机、主循环、双缓冲

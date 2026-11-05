@@ -14,7 +14,8 @@
 
 #include "scene.h"
 
-static const scene_t *SCENES[] = {&SCENE_PANEL, &SCENE_HERO, &SCENE_CLOCK, &SCENE_AMBIENT};
+static const scene_t *SCENES[] = {&SCENE_PANEL, &SCENE_HERO, &SCENE_TRENDING,
+                                  &SCENE_CLOCK, &SCENE_AMBIENT};
 #define N ((int)(sizeof SCENES / sizeof SCENES[0]))
 
 static int cur = 0;

@@ -1,0 +1,11 @@
+[Unit]
+Description=抓取 GitHub Trending 榜单（hphelm-panel 的 trending 幕数据）
+Documentation=https://github.com/zeroicey/hphelm-panel
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# 抓不到就保留上一份缓存（面板照常显示上一份；抓取失败不影响面板）
+ExecStart=/usr/local/lib/hphelm-panel/fetch-trending.py /var/cache/hphelm-panel/trending.tsv
+# 想换榜单：往 ExecStart 后面加 --since weekly 或 --language rust

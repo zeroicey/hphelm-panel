@@ -1,0 +1,11 @@
+[Unit]
+Description=每 3 小时同步一次 GitHub Trending
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=3h
+AccuracySec=1min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

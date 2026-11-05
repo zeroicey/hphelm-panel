@@ -91,6 +91,7 @@ static char CFG_REMOTE2[64] = ""; /* 左列第二台远程机（--remote2；空 
 static double CFG_ROTATE = -1;
 static char CFG_SCENE[32] = "";    /* 钉住某一幕（--scene）；空 = 从 panel 开始轮换 */
 static int CFG_TRANS = -1;          /* -1 = 每次自动换一种特效；>=0 = 固定 */
+static char CFG_TRENDING[256];      /* GitHub 趋势缓存文件（trending=）；空 = 用 scene 默认路径 */
 static int DBG = 0;               /* HPHELM_PANEL_DEBUG=1：每秒打印主循环仪表 */
 static long dbg_iter, dbg_ev, dbg_poll_rd, dbg_poll_to, dbg_poll_oth, dbg_redraw, dbg_sample;
 static long dbg_remote_frames;
@@ -143,6 +144,12 @@ static void read_conf_file(void) {
             v[strcspn(v, " \t\r\n")] = 0;
             int fx = scene_fx_by_name(v);
             if (fx >= 0) CFG_TRANS = fx;
+            continue;
+        }
+        if (strncmp(p, "trending=", 9) == 0 && !CFG_TRENDING[0]) {
+            char *v = p + 9;
+            v[strcspn(v, " \t\r\n")] = 0;
+            if (v[0]) snprintf(CFG_TRENDING, sizeof CFG_TRENDING, "%s", v);
             continue;
         }
     }
@@ -731,6 +738,7 @@ int main(int argc, char **argv) {
         }
     }
 
+    if (CFG_TRENDING[0]) scene_trending_file(CFG_TRENDING);
     signal(SIGUSR1, on_sig); /* 立即锁屏（进登录页） */
     signal(SIGUSR2, on_sig); /* 立即回面板 */
     signal(SIGPIPE, SIG_IGN);

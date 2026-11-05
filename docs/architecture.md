@@ -169,6 +169,19 @@ typedef struct {
 **回到面板时**（`set_state(ST_PANEL)`）调 `scenes_resume(now)`：打断进行中的转场、把停留计时
 从现在重新开始 —— 否则「登录页待了两分钟，一回到面板立刻又换幕」。
 
+**`trending` 幕的数据通路**（唯一会联网的幕，但仍然不自己联网）：
+
+```
+fetch-trending.py（urllib + regex，GitHub 没有 trending API）
+     └─ 原子写 /var/cache/hphelm-panel/trending.tsv   ← systemd timer 每 3h
+              │
+scene_trending.c  stat() 比对 mtime/size，文件变了才重读；sig 里混进「分钟」
+              └─ 无文件 = 空态（写清楚该跑哪个 service，不装假数据）
+```
+
+这样做的理由和 `remote` 一样：**网络与渲染隔离**。抓取失败/超时只会让榜单停在上一份，
+面板永远不需要为 HTTP 等一秒。TSV 而不是 JSON，是为了让 C 侧零依赖（`fgets` + `\t` 切列）。
+
 **统一 HUD**：`render()` 在所有幕之后画底部居中的几个小点（当前幕实心），只有轮换打开时才画。
 幕自己不画页码（`clock` 幕底部那句「下一幕 · Ns」是幕自己的信息，不是 HUD）。
 

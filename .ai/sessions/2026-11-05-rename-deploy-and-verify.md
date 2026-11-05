@@ -29,9 +29,9 @@ kiosk 与 trending 定时器全部跑通，验收数字见 `.ai/CURRENT_TASK.md`
 
 ## Loose ends
 
-- [ ] 旧二进制目录 `/usr/local/lib/hphelm-panel/`、`/usr/local/share/hphelm-panel/`、`/usr/local/bin/hphelm-kiosk` 与旧单元文件待稳定后删除（现作回滚）
-- [ ] `~/.ssh/config` 的 `Host hpopi5b` 仍指失效的 `~/.ssh/hpopi5b`；未改（影响其他机条目，先问）
-- [ ] 旧日志 `/var/log/hphelm-panel.log` 与旧 cache 目录未删
+- [x] 旧产物已清理（2026-11-05 晚，用户「生产也更新」）：`/usr/local/lib/hphelm-panel`、`/usr/local/share/hphelm-panel`、`/usr/local/bin/hphelm-kiosk`、`/etc/hphelm-panel.conf`、旧 logrotate、旧 cache/lock、`hphelm-{kiosk,trending}.*` 单元；旧日志移入 `/root/backup-rename-20261105/hphelm-panel.log.final`。清理后 kiosk active、panel 进程 1、trending 下次 17:56
+- [x] `ssh hpopi5b` 根治（2026-11-05 晚）：真因不是 config 里钥文件消失（`~/.ssh/hpopi5b` 一直在），而是它的公钥不在 Pi `authorized_keys`；追加公钥（备份 `authorized_keys.bak-20261105-pre-hpopi5b`，现 3 把）⇒ 裸 `ssh hpopi5b` 通，config 未改
+- [ ] 回滚能力现在只剩 `/root/backup-rename-20261105/`（旧二进制/probe/启动脚本/conf/单元/logrotate/日志尾）
 
 ## Do not repeat
 

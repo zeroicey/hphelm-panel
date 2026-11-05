@@ -27,7 +27,10 @@
   - 日志 `X Error|Segmentation` **0** · CPU 5.7% / RSS 17956 KB / 1 线程
   - `hpopi5b-trending.timer` 14:56 首次跑通：`16 条 → /var/cache/hpopi5b-panel/trending.tsv (daily)`，下次 17:56
 - 真机源码实测 **4008 行 C/H**（旧文档的 3054 是两幕之前的数）。
-- 从 hpcmd 连 Pi 必须 `ssh -i ~/.ssh/id_ed25519 hpopi5b`（`~/.ssh/config` 的 IdentityFile 指向已失效钥 ⇒ 裸 ssh 被拒）。
+- 同日收尾（用户「生产也更新 2 根治」）：
+  - 生产旧名残留已清（旧目录/conf/logrotate/cache/lock/旧单元），旧日志并入备份；`grep -rl hphelm /etc /usr/local` 0 命中，kiosk 仍 active。
+  - `ssh hpopi5b` 根治：真因是 `~/.ssh/hpopi5b` 的**公钥没进 Pi `authorized_keys`**（钥文件一直在）；追加后裸 ssh 通，config 未改。
+  - ⚠️ 回滚现只靠 `/root/backup-rename-20261105/`（旧产物已删）。
 
 ## Goal
 

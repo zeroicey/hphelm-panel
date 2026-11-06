@@ -1,34 +1,28 @@
-/* view_panel.c —— 运维面板版面（单机：一台主机双子列 + 进程榜整列）
+/* view_panel.c —— 运维面板版面（单机：一台主机双子列 + 容器块 + 一整列进程榜）
  *
- * 2026-11-06 第六版（用户口径）：hpcmd 下线，全场 all-in-one 到 hpcore
- *   ① 「全显示 hpcore 相关东西」⇒ 不再分「本机 / 生产服务器」两列，只画**一台**主机；
- *      配了 --remote 就画那台（kiosk 用 hpcore），没配就画本机（开发时离屏看效果）。
- *   ② 「把空间占满」⇒ 主机区切成左右两个子列，各自「文字行 + 2 张曲线」；
- *      曲线把剩下的高度全部吃掉（653 - 187 固定 - 12 间距）÷ 2 ≈ 224 逻辑像素，
- *      并且用 v_chart_scale() 画刻度底 —— 低负载时曲线贴底也读作「一张图」而不是「空白」。
- *   ③ 「进程那一列可以全部给他了」⇒ 进程列整列归这台机：
- *      上段按内存（RSS）12 行、下段按 CPU 12 行，每行都带 pid 与 CPU%。
+ * 2026-11-06 第二版（用户口径）：
+ *   ① 「全显示 hpcore 相关东西」⇒ 只画**一台**主机（配了 --remote 画那台，否则画本机）。
+ *   ② 「两个一模一样的进程 列表」⇒ 斧掉重复：**一整列只一条榜**（按 CPU%，同值比 RSS），
+ *      24~26 行都由可用高度算出来；CPU% 与 RSS 两列都在。
+ *   ③ 「一个折线图占位太多了」⇒ 曲线高度上限 260 → 150，腾出的高度给容器块。
+ *   ④ 「把我们的 Docker 容器都列出来，搞一块地方显示资源占用」⇒ 主机块下面一个容器块，
+ *      两个子列各 5 个，名字 + 内存 + CPU%，数据来自探针的 D 行（cgroup v2 + docker.sock）。
  *
- *   ┌ 顶栏：hpcore  生产服务器 ● │ 2026-11-06 15:44:02  ● 24×7 ─────────────────┐
- *   ├──────────────────────────────────┬──────────────────────────────────────┤
- *   │ hpcore                  ● 在线   │ hpcore 进程  共 496 个  按内存 (RSS)  │
- *   │ 生产 192.168.5.102 up 11d1h 16核 │ 1 pi       2669543  533M      19%    │
- *   │ ──────── 细线 ────────           │ …12 行                               │
- *   │ CPU 3% 68°C 1589MHz               │ ────────── 细线 ──────────            │
- *   │      [右] load 1.64 / 1.19 / 1.04│ hpcore 进程              按 CPU      │
- *   │ [CPU 条]                         │ 1 magpie   1818752  449M     200%    │
- *   │ [每核柱 ×16]                     │ …12 行                               │
- *   │ [CPU 曲线 ─ 刻度 ─      100%]    │                                      │
- *   │ 内存 40% 11.4G/28.2G 缓存20.6G   │                                      │
- *   │ [内存条]                         │                                      │
- *   │ [内存曲线 ─ 刻度 ─      100%]    │                                      │
- *   │ 近 5 分钟 · 1 Hz 采样            │                                      │
- *   └──────────────────────────────────┴──────────────────────────────────────┘
- *   右子列（上面那段是左子列）：网络 + 双曲线 → 磁盘 I/O + 双曲线 → 细线 →
- *   磁盘用量 + 条 → 细线 → 容器/线程/进程 → 累计流量 → 细线 → PSI 压力 + 盘累计读写
+ *   ┌ 顶栏：hpcore  生产服务器 ● │ 2026-11-06 15:44:02  ● 24×7 ──────────────┐
+ *   ├───────────────────────────┬─────────────────────────────────────────┤
+ *   │ CPU 5% 52°C 400MHz        │ hpcore 进程  共 535 个  按 CPU（近 3 秒）│
+ *   │ [CPU 条] [每核柱 ×16]     │ 1 magpie   1818752  424M   236.7%     │
+ *   │ [CPU 曲线 ─ 刻度 ─ 100%] │ …26 行（行数按可用高度算）              │
+ *   │ 内存 47% …                 │                                         │
+ *   │ [内存条] [内存曲线]       │                                         │
+ *   │ 近 5 分钟 · 1 Hz 采样     │                                         │
+ *   │ 容器 23 个 合计 3.4G       │                                         │
+ *   │ magpie 933M 325.7%        │                                         │
+ *   └───────────────────────────┴─────────────────────────────────────────┘
+ *   主机块内部仍分左右两个子列：A = CPU/内存，B = 网络/磁盘IO/磁盘/系统/PSI。
  *
  * **没有卡片**：分区只靠「1px 细线 + 字号层级 + 留白」，没有圆角框/底色块。
- * **两列固定高度必须相等**（各 187）——否则左右两列的曲线基线会错开，看着像画歪了。
+ * **两个子列固定高度必须相等**（各 187）——否则左右两列的曲线基线会错开。
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -43,11 +37,12 @@
 /* ============================ 进程榜（一列，两段） ============================ */
 /* rows/nrows = 要显示的那份榜单（内存榜或 CPU 榜），sort_lbl = 排序口径（靠右小字）
  * total < 0 时不画「共 N 个」（同一台机的两段榜里不重复一遍进程总数） */
-static void draw_proc_section(cairo_t *cr, const proc_row_t *rows, int nrows,
-                              const char *tag, uint32_t tag_col, const char *sort_lbl, double x,
-                              double y, double w, int maxrows, int total) {
+/* 进程榜：**一整列一条榜**（2026-11-06 第二版）。标签、名次、名称+pid、CPU%、内存。 */
+static void draw_proc_list(cairo_t *cr, const proc_row_t *rows, int nrows, const char *tag,
+                           uint32_t tag_col, const char *sort_lbl, double x, double y,
+                           double w, int maxrows, int total) {
     char b[48];
-    /* 段标题：主机名 + 进程总数（同一行，靠右是排序口径） */
+    /* 标题：主机名 + 进程总数（同一行，靠右是排序口径） */
     double tw = v_text(cr, x, y, v_fd_title(), tag_col, "%s", tag);
     if (total >= 0)
         v_text(cr, x + tw + 14, y + 1, v_fd_label(), C_OVERLAY1, "共 %d 个", total);
@@ -71,7 +66,7 @@ static void draw_proc_section(cairo_t *cr, const proc_row_t *rows, int nrows,
             v_set_rgb(cr, C_SURFACE1, 0.25);
             cairo_fill(cr);
         }
-        v_text_right(cr, x_rank, ry + 4, v_fd_small(), C_OVERLAY0, "%d", i + 1);
+        v_text_right(cr, x_rank, ry + 5, v_fd_small(), C_OVERLAY0, "%d", i + 1);
         v_fmt_mb(rows[i].rss_mb, b, sizeof b);
         /* 内存：先右对齐画掉（返回宽度），省掉一次 v_text_w */
         double memw = v_text_right_w(cr, x_mem, ry, v_fd_proc(), C_OVERLAY1, "%s", b);
@@ -80,7 +75,7 @@ static void draw_proc_section(cairo_t *cr, const proc_row_t *rows, int nrows,
         /* cpu_pct < 0 ⇒ 探针是老格式（没有这一列）；0.0% 是**真值**，不要画成 "-" */
         if (rows[i].cpu_pct >= 0.0) {
             uint32_t cc = rows[i].cpu_pct > 80 ? C_PEACH : C_OVERLAY1;
-            if (rows[i].cpu_pct < 10.0)
+            if (rows[i].cpu_pct < 100.0)
                 v_text_right(cr, x_cpu, ry, v_fd_proc(), cc, "%.1f%%", rows[i].cpu_pct);
             else v_text_right(cr, x_cpu, ry, v_fd_proc(), cc, "%.0f%%", rows[i].cpu_pct);
         } else v_text_right(cr, x_cpu, ry, v_fd_proc(), C_SURFACE1, "-");
@@ -349,6 +344,45 @@ static void draw_host(cairo_t *cr, const metrics_t *m, const view_feed_t *feed,
                 (bottom - L_BODY_Y - L_H_CAP_H) - (FIX_A + 2 * (ch + L_H_CHART_GAP)));
 }
 
+/* ============================ 容器块 ============================
+ * 2026-11-06 第二版（用户口径：「可以把我们的 Docker 容器都列出来呀，搞一块地方显示资源占用」）。
+ * 位置：主机区下面，横跨主机区整宽，与主机区一样切成左右两个子列（各 5 个）。
+ *   容器  23 个  合计 3.4G                    内存 / CPU（近 3 秒）
+ *   magpie              933M   325.7%      cormorant-browser-1   869M   0.1%
+ *   …
+ * 数据从探针的 D 行来（cgroup v2 + docker.sock 取名字）。没容器时整块不画，曲线自己长回去。
+ */
+static void draw_ctr_block(cairo_t *cr, const metrics_t *m, double x, double y, double w,
+                           double sub_gap) {
+    char b1[24];
+    double tw = v_text(cr, x, y, v_fd_title(), C_GREEN, "容器");
+    double ax = x + tw + 10;
+    ax += v_text(cr, ax, y + 1, v_fd_label(), C_OVERLAY1, "%d 个", m->nctr_total) + 12;
+    v_fmt_mb(m->ctr_mem_total_mb, b1, sizeof b1);
+    v_text(cr, ax, y + 1, v_fd_small(), C_OVERLAY0, "合计 %s", b1);
+    v_text_right(cr, x + w, y + 2, v_fd_small(), C_OVERLAY0, "内存 / CPU（近 3 秒）");
+    y += L_CTR_TITLE_H;
+
+    const double wa = (w - sub_gap) / 2;
+    for (int i = 0; i < m->nctr && i < 2 * L_CTR_ROWS; i++) {
+        int col = i / L_CTR_ROWS, row = i % L_CTR_ROWS;
+        double cx = x + col * (wa + sub_gap);
+        double ry = y + row * L_CTR_ROW_H;
+        char nm[40], mb[24], cpu[16];
+        const ctr_row_t *c = &m->ctr[i];
+        /* 名称：给右边的数字留 118px（内存 62 + CPU 56） */
+        v_truncate_mono(nm, sizeof nm, c->name, v_fd_proc(), wa - 126);
+        v_text(cr, cx, ry, v_fd_proc(), C_TEXT, "%s", nm);
+        v_fmt_mb(c->mem_mb, mb, sizeof mb);
+        v_text_right(cr, cx + wa - 58, ry, v_fd_proc(), C_OVERLAY1, "%s", mb);
+        /* CPU 可以是 300%+（多线程容器）：<100 保留一位小数，≥100 取整 */
+        if (c->cpu_pct < 100.0) snprintf(cpu, sizeof cpu, "%.1f%%", c->cpu_pct);
+        else snprintf(cpu, sizeof cpu, "%.0f%%", c->cpu_pct);
+        uint32_t cc = c->cpu_pct > 80 ? C_PEACH : C_OVERLAY1;
+        v_text_right(cr, cx + wa, ry, v_fd_proc(), cc, "%s", cpu);
+    }
+}
+
 /* ============================ 整屏 ============================ */
 void view_panel_draw(cairo_t *cr, const view_ctx_t *v, const metrics_t *m,
                      const view_feed_t *feed, const char *target) {
@@ -361,7 +395,9 @@ void view_panel_draw(cairo_t *cr, const view_ctx_t *v, const metrics_t *m,
     if (!v->bg_done) v_bg(cr, v->lw, v->lh);
     draw_topbar(cr, v, m, feed, target);
 
-    /* 宽分配：主机区（两个子列）+ 进程榜吃掉剩余量（⚠️ 不要写死进程列宽度） */
+    /* 宽分配：主机区（两个子列）+ 进程榜吃掉剩余量（⚠️ 不要写死进程列宽度）。
+     * 2026-11-06 第二版：进程榜只有三列（名次/名称+pid/内存/CPU），529 宽会空出一大片，
+     * 把主机区放宽到 0.66（曲线变宽变矮，比例更像「图」），进程榜收到 ~403。 */
     const double host_w = mw * L_HOST_FRAC;
     const double x_host = mx;
     const double x_proc = mx + host_w + L_COL_GAP;
@@ -372,22 +408,24 @@ void view_panel_draw(cairo_t *cr, const view_ctx_t *v, const metrics_t *m,
     v_set_rgb(cr, C_SURFACE1, 0.35);
     cairo_fill(cr);
 
-    draw_host(cr, m, feed, target, x_host, host_w, bottom);
+    /* 纵向：主机块（含它自己的时间轴说明行）在上，容器块贴着底部；
+     * 没有容器时 ctr_h = 0 ⇒ 曲线自己长回去（不超过 L_H_CHART_MAX）。 */
+    const double ctr_h = m->nctr > 0
+                             ? (L_CTR_GAP + L_CTR_TITLE_H + L_CTR_ROWS * L_CTR_ROW_H +
+                                L_CTR_PAD_B)
+                             : 0.0;
+    const double host_bottom = bottom - ctr_h;
+    draw_host(cr, m, feed, target, x_host, host_w, host_bottom);
+    if (m->nctr > 0)
+        draw_ctr_block(cr, m, x_host, host_bottom + L_CTR_GAP, host_w, L_SUB_GAP);
 
-    /* ---------- 进程榜（整列归这一台机：上段按内存，下段按 CPU） ---------- */
+    /* ---------- 进程榜（一整列一条榜；行数由可用高度算出来，空着比留白好） ---------- */
     char lbl[80];
     snprintf(lbl, sizeof lbl, "%s 进程", m->host);
-    double py = L_BODY_Y;
-    draw_proc_section(cr, m->top, m->ntop, lbl, C_YELLOW, "按内存 (RSS)", x_proc, py, proc_w,
-                      L_PROC_ROWS, m->nproc);
-    py += L_PROC_SEC_H;
-    /* 两段之间一条细线（不是卡片） */
-    cairo_rectangle(cr, x_proc, py + L_PROC_SEC_GAP / 2, proc_w, 1.0);
-    v_set_rgb(cr, C_SURFACE1, 0.35);
-    cairo_fill(cr);
-    py += L_PROC_SEC_GAP;
-    draw_proc_section(cr, m->top_cpu, m->ntop_cpu, lbl, C_YELLOW, "按 CPU（近 1 秒）", x_proc,
-                      py, proc_w, L_PROC_ROWS, -1);
+    /* 末行离屏幕下沿留 10px（贴着边看着像被切掉一截） */
+    int rows = (int)((bottom - L_BODY_Y - L_PROC_TITLE_H - 10.0) / L_PROC_ROW_H);
+    if (rows > L_PROC_MAX) rows = L_PROC_MAX;
+    if (rows < 0) rows = 0;
+    draw_proc_list(cr, m->top_cpu, m->ntop_cpu, lbl, C_YELLOW, "按 CPU（近 3 秒）", x_proc,
+                   L_BODY_Y, proc_w, rows, m->nproc);
 }
-
-/* 段标题里的「共 N 个」不再单独占位，改由 sort_lbl 带出（避免两段重复同一句） */

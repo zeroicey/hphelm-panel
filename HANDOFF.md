@@ -1,20 +1,84 @@
 # 交接：hpopi5b-panel（运维面板 + 自研锁屏）
 
-> **本轮状态（第十三轮：单机化，2026-11-06）**：`hpcmd` 下线，全场 all-in-one 到 `hpcore`。
-> 用户口径：「那一幕你看看显示点啥比较好，全显示 hpcore 相关东西，把空间占满，进程那一列可以全部给他了。」
-> ⇒ 面板从 **本机 │ 生产 │ 进程榜** 三列改成 **主机区（左右两个子列）│ 进程榜整列**：
-> 只画一台机（配了 `--remote` 就画它，否则画本机），曲线从 96 逻辑像素长到 **219**，
-> 进程榜整列归这台机（上段按内存 12 行 + 下段按 CPU 12 行，每行带 pid 与 CPU%）。
-> `remote2` / `--remote2` 已废弃（仍然接受，只打一行提示，防老脚本把 kiosk 弄黑）。
+> **本轮状态（第十四轮：面板第二版，2026-11-06 下午）**：`hpcmd` 下线后单机化已上线，
+> 用户又提四条：「两个一模一样的进程 列表」「一个折线图占位太多了」「先把那个进程列表搞定」
+> 「可以把我们的 Docker 容器都列出来呀，搞一块地方显示资源占用」。
+> ⇒ 进程榜从「按内存 12 + 按 CPU 12」两段合成**一整列一条榜（25 行，按 CPU%，同值比 RSS）**；
+> 曲线高度上限 260 → **150**；主机区下面加**容器块**（横跨主机区，两个子列各 5 个，
+> 名字 + 内存 + CPU%，数据来自探针新增的 `D` 行：cgroup v2 + docker.sock 翻名字）。
+> 主机区宽度占比 0.56 → 0.66（进程榜只剩三列，太宽会空），1080p 实测 `ch = 138.4`、`余 = 0.0`。
 >
-> **前几轮**：第七轮双主机三列（**已被本轮取代**）· 第六轮部署链本土化 ·
-> 第十二轮第 4 格曲线换成磁盘 I/O · 第六轮之前：桌面↔面板↔登录跑通 → 消闪（离屏 pixmap）→
-> 修自激空转（33~49% → 0.60%）→ 无卡片紧凑版式。
+> **前几轮**：第十三轮单机化（本机 │ 生产 两列 → 单机双子列 + 进程榜整列，`remote2` 废弃）·
+> 第七轮双主机三列（**已被取代**）· 第六轮部署链本土化 · 第十二轮第 4 格曲线换磁盘 I/O ·
+> 更早：桌面↔面板↔登录跑通 → 消闪（离屏 pixmap）→ 修自激空转 → 无卡片紧凑版式。
 >
-> **最后更新：2026-11-06（第十三轮：单机化 + 空间占满 + 进程榜给 hpcore）。**
-
+> **最后更新：2026-11-06（第十四轮：一条进程榜 + 容器块 + 曲线降高）。**
 ---
 
+## 第十四轮：一条进程榜 + 容器块 + 曲线降高（2026-11-06 下午）
+
+**用户口径**（m00842）：「我没搞懂 你为什么要搞两个一模一样的进程 列表 你直接整列显示 二十多个不就好了吗
+另外两列空余空间也很多 一个折线图占位太多了 继续想办法 先把那个进程列表搞定吧 也不用占那么大空间吧
+你可以把我们的 Docker 容器都列出来呀 搞一块地方 显示资源占用之类的」
+
+**四条都对**：上段（按内存）与下段（按 CPU）画的是同一批进程、字段一样，只有顺序不同 ——
+一行信息花了两行版面；而 hpcore 是 all-in-one，**容器才是这机队唯一真在跑的东西**，
+面板里却只有一个「容器 23」的数字。
+
+**改了什么**
+
+- **一条榜**（`src/view_panel.c::draw_proc_list`，原 `draw_proc_section`）：只调一次，
+  数据用 `m->top_cpu`，行数按可用高度算 `(bottom - BODY_Y - TITLE_H - 10) / ROW_H`
+  ⇒ 1080p 下 **25 行**（`L_PROC_MAX 26` 封顶）。每行「名次 · 名称 pid · 内存 · CPU%」。
+  CPU%：`<0`（老探针没这列）画 `-`、`<100` 一位小数、`≥100` 取整、`>80` peach。
+- **容器块**（`draw_ctr_block`）：横跨主机区整宽、贴在主机块下沿，两个子列各 5 个（共 10），
+  标题「容器 N 个 合计 xG … 内存 / CPU（近 3 秒）」。没有容器时 `ctr_h = 0` ⇒ 整块不画、曲线自己长回去。
+- **曲线降高**：`L_H_CHART_MAX 260 → 150`；`L_HOST_FRAC 0.56 → 0.66`；新增
+  `L_PROC_TITLE_H 28 / L_PROC_ROW_H 24 / L_PROC_MAX 26 / L_CTR_GAP 18 / L_CTR_TITLE_H 24 /
+  L_CTR_ROW_H 22 / L_CTR_ROWS 5 / L_CTR_PAD_B 16`；删 `L_PROC_ROWS / L_PROC_COLS /
+  L_PROC_SEC_H / L_PROC_SEC_GAP`。
+- **探针**（`tools/probe-remote.pl`）：`Q` 行 24 条 ≥2% → **40 条无阈值**（空载时自动退化成内存榜）；
+  新增 `D <总数> <合计MiB> <name>:<memMiB>:<cpu%>,…`：glob `/sys/fs/cgroup/system.slice/docker-*.scope`，
+  读 `memory.current` 与 `cpu.stat` 的 `usage_usec`（差值/hz/秒 ⇒ 1.0 = 一个核），
+  名字从 `docker.sock`（`GET /containers/json?all=1`，`Connection: close` 避 chunked，缓存 300s）翻，
+  翻不到显示 ID 前 12 位。`perl -c` 通过；`sudo -n perl tools/probe-remote.pl` 实测
+  `D 23 3520.0 magpie:977.7:325.7,cormorant-browser-1:868.8:0.1,…`（23 个容器名全部解析成功）。
+- **解析**（`src/remote.c`）：`parse_D()` + `parse_ctr_row()`（3 段：name / mem / cpu）。
+  `metrics.h` 新增 `ctr_row_t` / `CTRN 12` / `nctr / nctr_total / ctr_mem_total_mb`。
+
+**判据（真屏 hpopi5b，`--scale 1.48`）**
+
+| 项 | 结果 |
+| --- | --- |
+| 编译 | hpopi5b `make panel` **0 warning / 0 error** |
+| 版面预算 | `LAYOUT_DEBUG=1` ⇒ `wa=399.2 ch=138.4 FIX_A=187 FIX_B=187 余=0.0` |
+| 进程榜行数 | 25 行（末行最低墨迹 699 逻辑像素，`bottom = 712`） |
+| 容器块 | 10 个、名字完整（`cormorant-browser-1` 不截断）、最低墨迹 703 逻辑像素（没被屏边切） |
+| 不闪 | `DISPLAY=:0 tools/probe-frames 60` ⇒ `>30% 变化帧 = 0` |
+| 服务 | `is-active=active`、`pgrep -cx` = 1（测试实例已按 `DISPLAY=:9` 挑出 kill）、`vt=tty1`、`greeter=0` |
+| 部署件一致 | `sha256sum` 比对构建产物与 `/usr/local/lib/...` ⇒ 二进制、探针各 1 行（`uniq`） |
+| 老格式兼容 | `parse_proc_row` 按冒号段数分流：3 段 ⇒ `cpu_pct = -1` ⇒ 画 `-` |
+
+**踩的坑（本轮新增）**
+
+1. **看缩放过的截图判版面**（第三次了）：我把「曲线在框内」误读成「掉到框外」、把「刻度在顶部」误读成
+   「在底部」、把「剩 9px」误读成「被切掉」。修法写进 `.ai/pitfalls/cases/2026-11-06-eyeballing-scaled-screenshots.md`：
+   **先算 `LAYOUT_DEBUG`，再 `pngcrop` 数像素，最后才看图**。
+2. **`docker Root Dir = /data/docker`**（不是 `/var/lib/docker`）⇒ 想靠猜 `config.v2.json` 路径拿容器名
+   会扑空；happpy **不在 docker 组**（`docker ps` permission denied）但 **`sudo -n` 可用**。
+   正解是探针用 `IO::Socket::UNIX` 直连 `/var/run/docker.sock`（探针以 root 跑）。
+3. **cgroup 目录名是 64 位容器 ID**，和 `docker ps` 的短 ID 对不上 ⇒ 必须靠 socket 的 `Id` 全串匹配。
+4. `ssh -T hpopi5b '<cmd> &'` 不加 `-T` 与 `< /dev/null` 时 ssh 会挂着等 pty ⇒ 工具调用 60s 超时；
+   后台任务用 `setsid ... < /dev/null > log 2>&1 &`。
+
+**留给下一轮**
+
+- 容器只按内存取前 12 个（面板画 10 个）；要「按 CPU 排容器」得再加一行契约。
+- 容器健康度（restart 次数 / OOM / 退出码）没做 —— 需要 `docker inspect` 或 cgroup 的 `memory.events`。
+- 进程榜仍是最贵的绘制项（25 行 × 2 次 pango 整形）；再降 CPU 的正解还是 PangoLayout 缓存。
+- `%s %s` 的「0M」：rss < 1MB 的进程显示 `0M`（`v_fmt_mb` 取整），要精确就到 `0.4M`。
+
+---
 ## 第十三轮：单机化（all-in-one hpcore）+ 把屏幕占满 + 进程榜整列给它（2026-11-06）
 
 **用户报障/口径**（m00001）：「hpcmd 下线了 现在所有都是 all in one hpcore 了 所以 那一幕你看看显示点啥

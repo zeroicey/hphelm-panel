@@ -160,14 +160,14 @@ python3 tools/measure.py assets/panel.png --runs 240 --bands
 | --- | --- | --- |
 | `src/theme.h` | 语义色宏 + 版式常量（逻辑像素）+ 字号 | ⭐ 最常动 |
 | `src/theme.c` | 白天/夜间两套调色板 + 固定时刻判定 | ⭐ 加主题只动这里 |
-| `src/view_panel.c` | 面板版面（主机区两子列 + 进程榜整列） | ⭐⭐ 改面板只动这里 |
+| `src/view_panel.c` | 面板版面（主机区两子列 + 容器块 + **一整列**进程榜） | ⭐⭐ 改面板只动这里 |
 | `src/scene.h` · `src/scenes.c` | 幕的接口（draw + 自身内容签名）与轮换/转场调度 | ⭐ 改调度只动这里 |
 | `src/scene_*.c` | 两个幕：panel / trending（两列榜单） | ⭐⭐ 加幕就新建一个文件 |
 | `src/view_login.c` | 登录页版面 | ⭐ 改登录页时 |
 | `src/view.c` | 绘制基元（文字/渐变/细线/条/每核柱/sparkline/量程） | 偶尔 |
 | `src/metrics.c` | **本机**数据采集（`/proc`、`/sys`，不 fork） | 加指标时 |
 | `src/remote.[ch]` | **生产服务器**采集（ssh 长连接 + 非阻塞解析 + 退避重连） | 改远端协议时 |
-| `tools/probe-remote.pl` | 喂给被监控机的**只读**探针（从 stdin 进，不落盘到对方）；`P`=按内存榜、`Q`=按 CPU 榜 | 加远端指标时 |
+| `tools/probe-remote.pl` | 喂给被监控机的**只读**探针（从 stdin 进，不落盘到对方）；`P`=按内存榜（仅调试）、`Q`=按 CPU 榜 40 条、`D`=容器 12 个（cgroup v2 + docker.sock 翻名字） | 加远端指标时 |
 | `tools/xshot.c` | 纯 X11 窗口截图 → PNG（零依赖；hpopi5b 上没有 magick 时的取证手段） | 偶尔 |
 | `tools/pngcrop.py` | 纯标准库 PNG 裁切/放大/单行游程（补 magick 缺席，量像素用） | 偶尔 |
 | `src/panel.c` | X11 窗口、事件、状态机、主循环、双缓冲、幕渲染入口、仪表 | 改交互时 |

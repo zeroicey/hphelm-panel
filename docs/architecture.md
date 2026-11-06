@@ -102,13 +102,19 @@ hpopi5b-panel ──fork/exec──▶ ssh -T <target> 'perl -'   ──▶ 被�
 | `S` | `ts host cpu% ncore uptime memT memU swapT swapU disk%:GB rx tx temp l1 l5 l15 freqMHz dock nproc gov iface ip` |
 | `C` | `core0% core1% …`（ncore 个） |
 | `P` | `nproc pid:rssMiB:cpu%:name,…`（每帧，按 RSS 取 24 条） |
-| `Q` | `pid:rssMiB:cpu%:name,…`（每帧，按 CPU 取 24 条，≥2% 才进榜） |
+| `Q` | `pid:rssMiB:cpu%:name,…`（每 3 秒，按 CPU 降序取 **40** 条，**无阈值** ⇒ 空载时自动退化成内存榜） |
+| `D` | `总数 合计MiB name:memMiB:cpu%,…`（每 3 秒，按内存降序取 **12** 个容器） |
 | `E` | 一帧结束 ⇒ **只有收到 E 才提交** |
 
-`P`/`Q` 的四个字段是 2026-11-06 起的新格式（进程榜整列归一台机后要按 CPU 排第二段）；
-面板这边按**冒号段数**兼容老的 3 字段格式（老探针没有 CPU% ⇒ 该列显示「-」，不显示假 0）。
-探针内部按 `pid → 上帧 utime+stime` 记忆差值算 CPU%（`USER_HZ` 恒 100、帧间隔 <1s 时不算），
-所以 `Q` 行是「上一帧到这一帧」的瞬时占用，不是平均值。
+`P`/`Q`/`D` 的多字段格式是 2026-11-06 起的新格式；面板这边按**冒号段数**兼容老的 3 字段
+`P` 格式（老探针没有 CPU% ⇒ `cpu_pct = -1` ⇒ 该列显示「-」，不显示假 0）。
+`D` 行的容器名来自 **docker.sock**（`GET /containers/json?all=1`，缓存 300s），
+内存/CPU 来自 cgroup v2 的 `docker-*.scope/{memory.current,cpu.stat}` ——
+**不用容器名就能算的资源一律不碰 socket**，socket 只用来把 64 位 ID 翻成名字（翻不到就显示前 12 位）。
+`cpu%` 是「上一帧到这一帧」的瞬值，1.0 = 占满一个核，容器可以是 300%（多线程）。
+探针内部按 `pid → 上帧 utime+stime`（`%ctr_usec` 同法记 cgroup 的 `usage_usec`）记忆差值算 CPU%
+（`USER_HZ` 恒 100、帧间隔 <1s 时不算），所以 `Q`/`D` 行都是「上一帧到这一帧」的瞬时占用，不是平均值。
+面板不再画「按内存」那一段（用户说「两个一模一样的进程列表」），`P` 行留着只作调试用。
 
 **四条设计约束**：
 
@@ -120,7 +126,7 @@ hpopi5b-panel ──fork/exec──▶ ssh -T <target> 'perl -'   ──▶ 被�
 
 **四个已踩的实现坑**：
 
-- `P` 行**必须按逗号分段**，不能按空格：进程名里有空格（`searxng worker`），
+- `P`/`Q`/`D` 行**必须按逗号分段**，不能按空格：进程名里有空格（`searxng worker`），
   按空格分会把一条记录劈成两半，名字里混进 pid 和内存数字（实测）。
   探针那边也把名字里的空白/逗号/冒号替换成 `_` —— 两头都防。
 - `stop_child()` **不能 kill 完就把 pid 清零**：子进程会变僵尸且永远没人收。

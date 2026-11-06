@@ -12,9 +12,11 @@
 #     <diskReadBps> <diskWriteBps>   （整盘 /sys/block/*/stat 求和，跳 loop/ram/zram/mtd 等）
 #   ⚠️ 新字段**只能追加在末尾**：解析器对缺失字段取 0，老探针 + 新面板不会崩。
 #   C <core0%> <core1%> ...           （ncore 个）
-#   P <nproc> <pid>:<rssMiB>:<cpu%>:<name>,...   （每 3 秒一次，按 RSS 降序，最多 24 条）
-#   Q <pid>:<rssMiB>:<cpu%>:<name>,...            （每 3 秒一次，按 CPU% 降序，最多 24 条；6 秒内首次为空）
-#                                                 ⚠️ 2026-11-06 起 P 行从 3 字段改成 4 字段（中间插了 cpu%）
+#   P <nproc> <pid>:<rssMiB>:<cpu%>:<name>,...   （每 3 秒一次，按 RSS 降序，最多 24 条；面板已不画，留给调试）
+#   Q <pid>:<rssMiB>:<cpu%>:<name>,...            （每 3 秒一次，按 CPU% 降序、同值比 RSS，最多 40 条）
+#                                                 ⚠️ 2026-11-06 起 P 行从 3 字段改成 4 字段（中间插了 cpu%
+#   D <容器总数> <合计MiB> <name>:<memMiB>:<cpu%>,...
+#                                                 （每 3 秒一次，按内存降序，最多 12 个）
 #   E                                  （一帧结束 ⇒ 只有收到 E 才提交，半帧不会被显示）
 #
 # ⛔ 三条硬约束（这台是**生产机**）：
@@ -89,13 +91,81 @@ sub procs {
     # 内存榜：<0.5 MiB 不进榜（否则一屏都是 rpm 小进程）
     my @by_mem = sort { $b->[0] <=> $a->[0] } grep { $_->[0] >= 512 * 1024 } @all;
     splice @by_mem, 24 if @by_mem > 24;
-    # CPU 榜：≥2%（3 秒内 60ms）才进榜；否则一屏 0.1% 的噪音，不如空着
-    my @by_cpu = sort { $b->[3] <=> $a->[3] || $b->[0] <=> $a->[0] } grep { $_->[3] >= 0.1 } @all;
-    splice @by_cpu, 24 if @by_cpu > 24;
+    # 单一榜：按 CPU% 降序（同值比 RSS）。面板只画这一条榜 ——
+    # 2026-11-06 用户口径：「两个一模一样的列表」没必要。这样在空载时它会自然退化成
+    # 「最大的几个进程」（cpu 全是 0.00 时按 RSS 排），原来想用两段榜表达的东西就这一条有了。
+    my @by_cpu = sort { $b->[3] <=> $a->[3] || $b->[0] <=> $a->[0] } @all;
+    splice @by_cpu, 40 if @by_cpu > 40;
     my $fmt = sub {
         return join(',', map { sprintf '%d:%.1f:%.1f:%s', $_->[1], $_->[0] / 1048576, $_->[3], $_->[2] } @_);
     };
     return (scalar @pids, $fmt->(@by_mem), $fmt->(@by_cpu));
+}
+
+# ---------------- 容器（cgroup v2 的 docker-*.scope） ----------------
+# 数值只从 cgroup 读（memory.current / cpu.stat 的 usage_usec），**不在每个周期 fork docker CLI**；
+# 名字走 docker.sock 的 GET /containers/json（缓存 5 分钟，每次一个几千字节的请求；
+# 拿不到就显示 12 位短 id —— 宁可显示短 id，也不要编一个名字）。
+# ⚠️ hpcore 的 docker root 是 /data/docker（不是 /var/lib/docker）⇒ 不去猜配置文件路径。
+my $DOCKER_SOCK = '/var/run/docker.sock';
+my %ctr_name;
+my $ctr_name_t = -1e9;
+my $have_unix  = eval { require IO::Socket::UNIX; 1 };
+
+sub docker_names {
+    my $now = time;
+    return if %ctr_name && $now - $ctr_name_t < 300;
+    $ctr_name_t = $now;
+    return unless $have_unix && -S $DOCKER_SOCK;
+    my $s = IO::Socket::UNIX->new(Type => Socket::SOCK_STREAM(), Peer => $DOCKER_SOCK);
+    return unless $s;
+    print $s "GET /containers/json?all=1 HTTP/1.0\r\nHost: localhost\r\nConnection: close\r\n\r\n";
+    my $resp = do { local $/; <$s> };
+    close $s;
+    return unless defined $resp && $resp =~ /\AHTTP\/1\.[01] 200/;
+    my $i = index($resp, "\r\n\r\n");
+    return if $i < 0;
+    my $body = substr($resp, $i + 4);
+    my %new;
+    while ($body =~ /"Id":"([0-9a-f]{64})","Names":\["\/([^"]*)"/g) { $new{$1} = $2 }
+    %ctr_name = %new if %new;    # 请求失败但拿到空数组时，不覆盖旧缓存
+}
+
+# 一个容器的内存/CPU 总计：按内存降序取前 12 个
+my %ctr_usec;    # id => 上一帧 usage_usec
+my $ctr_t;       # 上一帧的时间（与 procs 同节奥，3 秒）
+sub containers {
+    opendir my $cg, '/sys/fs/cgroup/system.slice' or return '';
+    my @sc = grep { /^docker-[0-9a-f]+\.scope$/ } readdir $cg;
+    closedir $cg;
+    return '' unless @sc;
+    docker_names();
+    my $now = time;
+    my $dt  = defined $ctr_t ? $now - $ctr_t : 0;
+    $ctr_t = $now;
+    my (@rows, %seen);
+    my ($total, $mem_sum) = (0, 0);
+    for my $sc (@sc) {
+        my ($id) = $sc =~ /^docker-([0-9a-f]+)\.scope$/ or next;
+        my $base = "/sys/fs/cgroup/system.slice/$sc";
+        my $mem  = trim(slurp("$base/memory.current") // '') || 0;
+        my ($usec) = (slurp("$base/cpu.stat") // '') =~ /^usage_usec (\d+)/m;
+        my $cpu = 0;
+        if (defined $usec && defined $ctr_usec{$id} && $dt > 0 && $usec >= $ctr_usec{$id}) {
+            $cpu = ($usec - $ctr_usec{$id}) / 1e6 / $dt * 100;
+        }
+        $ctr_usec{$id} = $usec if defined $usec;
+        $seen{$id} = 1;
+        $total++;
+        $mem_sum += $mem;
+        my $name = $ctr_name{$id} // substr($id, 0, 12);
+        $name =~ s/[\s;,:]/_/g;
+        push @rows, [ $mem, $name, $cpu ];
+    }
+    %ctr_usec = map { $_ => $ctr_usec{$_} } grep { $seen{$_} } keys %ctr_usec;    # 别的容器删了就丢掉
+    my @top = grep { defined } (sort { $b->[0] <=> $a->[0] } @rows)[0 .. 11];
+    my $list = join(',', map { sprintf '%s:%.1f:%.1f', $_->[1], $_->[0] / 1048576, $_->[2] } @top);
+    return sprintf 'D %d %.1f %s', $total, $mem_sum / 1048576, $list;
 }
 
 # ---------------- 网卡（有全局 IPv4 的 en* > wl* > 其它） ----------------
@@ -271,8 +341,12 @@ while (1) {
         }
     }
 
-    my ($nproc, $top, $topcpu) = ('', '', '');
-    if ($iter % 3 == 0) { ($nproc, $top, $topcpu) = procs(); $nproc_last = $nproc if $nproc ne '' }
+    my ($nproc, $top, $topcpu, $ctr) = ('', '', '', '');
+    if ($iter % 3 == 0) {
+        ($nproc, $top, $topcpu) = procs();
+        $nproc_last = $nproc if $nproc ne '';
+        $ctr = containers();
+    }
     $nproc = $nproc_last // 0 if $nproc eq '';
 
     # 线程总数：/proc/loadavg 第 4 字段 "运行中/总数"
@@ -311,6 +385,7 @@ while (1) {
     print 'C ', join(' ', @core), "\n";
     print "P $nproc $top\n" if $top ne '';
     print "Q $topcpu\n" if $topcpu ne '';
+    print "$ctr\n" if $ctr ne '';
     print "E\n";
     $iter++;
 }

@@ -21,4 +21,6 @@
 | `2026-10-21-remote-feed-hangs-without-frames.md` | 「ssh 连上了但没数据」永不重连 ⇒ 面板永久显示离线；且运行态零日志 |
 | `2026-10-21-three-column-layout-silent-misrenders.md` | 四个静默错版：相对/绝对坐标混用 · -1 兼职两种语义 · UTF-8 截断切半 · 固定高度表多算一块 |
 | `2026-11-05-offscreen-harness-all-black.md` | 离屏 harness 出图全黑：忘了 `theme_set()` ⇒ `TP` 全 0（黑底画黑字）；用红矩形做对照排除导出链路 |
+| `2026-11-06-cpu-measure-freq-confound.md` | `ondemand` 空载 408MHz 下同一份代码量出 5.8%，`performance` 固定 1.8GHz 只有 3.7% ⇒ CPU 结论必须 A/B + 固定频率 |
+| `2026-11-06-eyeballing-scaled-screenshots.md` | 用缩放截图的像素坐标判版面，三次把「正常」误读成「越界」；先算 `LAYOUT_DEBUG` 再 `pngcrop` 数像素 |
 | `2026-11-05-probe-frames-vs-scene-rotation.md` | 判据「>30% 帧必须 0」在 kiosk 30s 换幕下必然假报警；换幕只满足「闪」三条指纹的第①条，用 `--rotate 0` 拿干净数 |

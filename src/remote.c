@@ -350,6 +350,37 @@ static void parse_P(metrics_t *m, char *rest) {
 
 static void parse_Q(metrics_t *m, char *rest) { parse_list(rest, m->top_cpu, &m->ntop_cpu); }
 
+/* ---- 容器：D <总数> <合计MiB> <name>:<memMiB>:<cpu%>,... ---- */
+static int parse_ctr_row(char *seg, ctr_row_t *row) {
+    char *c1 = strchr(seg, ':');
+    if (!c1) return 0;
+    char *c2 = strchr(c1 + 1, ':');
+    if (!c2) return 0;
+    *c1 = 0;
+    *c2 = 0;
+    snprintf(row->name, sizeof row->name, "%s", seg);
+    row->mem_mb = tdouble(c1 + 1);
+    row->cpu_pct = tdouble(c2 + 1);
+    return 1;
+}
+
+static void parse_D(metrics_t *m, char *rest) {
+    char *p = rest, *o;
+    m->nctr = 0;
+    if (!tok(&p, &o)) return;
+    m->nctr_total = (int)tlong(o);
+    if (!tok(&p, &o)) return;
+    m->ctr_mem_total_mb = tdouble(o);
+    while (*p == ' ') p++;
+    while (*p && m->nctr < CTRN) {
+        char *end = strchr(p, ',');
+        if (end) *end = 0;
+        if (parse_ctr_row(p, &m->ctr[m->nctr])) (m->nctr)++;
+        if (!end) break;
+        p = end + 1;
+    }
+}
+
 /* 返回 1 = 这一帧提交了 */
 static int commit(remote_t *r, double now) {
     metrics_t *s = &r->stg;
@@ -417,6 +448,7 @@ int remote_read(remote_t *r, double now) {
         else if (line[0] == 'C' && line[1] == ' ') parse_C(&r->stg, line + 2);
         else if (line[0] == 'P' && line[1] == ' ') parse_P(&r->stg, line + 2);
         else if (line[0] == 'Q' && line[1] == ' ') parse_Q(&r->stg, line + 2);
+        else if (line[0] == 'D' && line[1] == ' ') parse_D(&r->stg, line + 2);
         else if (line[0] == 'E') {
             if (commit(r, now)) committed = 1;
         }

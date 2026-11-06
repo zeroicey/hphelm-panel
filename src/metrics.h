@@ -26,6 +26,15 @@ typedef struct {
     double cpu_pct;   /* 自上次采样以来的 CPU 占用（可为 100 以上：多线程进程） */
 } proc_row_t;
 
+/* 一个容器一行（2026-11-06：用户要求「把 Docker 容器都列出来，显示资源占用」）
+ * 数值来自 cgroup v2（memory.current / cpu.stat），名字来自 docker.sock。 */
+#define CTRN 12
+typedef struct {
+    char name[24];
+    double mem_mb;
+    double cpu_pct;   /* 同样可为 100 以上 */
+} ctr_row_t;
+
 /* ---- 一台主机的指标快照 ----
  * 本机与生产服务器共用这一个结构（同一个 draw_host() 画两遍 ⇒ 两台版面/口径必然对称）。
  * 本机由 metrics.c 填（直接读 /proc），远端由 remote.c 从探针输出解析后填。
@@ -68,12 +77,16 @@ typedef struct {
     int ts_up;
     /* 进程：两个榜（同一台机、两种排序）—— 面板右列上段「按内存」、下段「按 CPU」 */
     int nproc;
-    proc_row_t top[TOPN];      /* 按 RSS 降序 */
+    proc_row_t top[TOPN];      /* 按 RSS 降序（2026-11-06 第二版面板已不画这段，留作未来/调试） */
     int ntop;
-    proc_row_t top_cpu[TOPN];  /* 按 CPU% 降序 */
+    proc_row_t top_cpu[TOPN];  /* 按 CPU% 降序（面板右列就是它） */
     int ntop_cpu;
     /* 容器（-1 = 不知道 / 没有 docker） */
     int ndocker;
+    ctr_row_t ctr[CTRN];       /* 按内存降序的前几条 */
+    int nctr;                  /* ctr[] 里有效几条 */
+    int nctr_total;            /* 这台机一共几个容器 */
+    double ctr_mem_total_mb;   /* 所有容器内存合计（面板标题右侧「合计 x」用） */
     /* 历史曲线 */
     ring_t cpu_hist;
     ring_t mem_hist;

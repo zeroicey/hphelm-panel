@@ -6,3 +6,4 @@ hpopi5b-auth
 # engram / pi 会话态（.ai/ 与 .agents/ 的 skill 载体要提交；drafts 与任务日志不提交）
 .engram/drafts/
 .pi/tasks/
+__pycache__/

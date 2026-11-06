@@ -2,7 +2,7 @@
 
 <!-- The single live surface. Keep it under ~60 lines: it is read on every session start. -->
 
-**Status:** 🟢 第十五轮已真机验收并部署（容器块 → Tailscale 尾网块），待提交 · **Updated:** 2026-11-06 傍晚
+**Status:** 🟢 第十六轮已真机验收并部署（趋势幕流式两列 + 排版计划缓存），待提交 · **Updated:** 2026-11-06 夜
 
 ## Goal
 
@@ -18,7 +18,10 @@
 - [x] **第十四轮**：一条进程榜（25 行）+ 容器块 + 曲线 260→150 + 主机区 0.56→0.66；探针新增 `D` 行；提交 `001cc1e`
 - [x] **第十五轮**：容器块整块**删除**，同位置换成 **Tailscale 尾网块**（探针读 tailscaled localapi，
       `T` 行 10 台；`D`/`docker.sock`/`ctr_*`/`draw_ctr_block`/`L_CTR_*` 全删）；真机验收并部署
-- [ ] 第十五轮提交（文档已同步：README / design / architecture / AGENTS / HANDOFF / ADR）
+- [x] **第十六轮**：趋势幕从 2×8 固定网格改**流式两列**（15 条全上屏 + 语言分布脚注）；
+      挖出并修掉「行尾 `\n` 多算一行」与「每帧重排白烧 1.5% CPU」（排版计划缓存 `plan`）；
+      文档：README / pitfalls §22/§23 / HANDOFF 第十六轮 / `.ai/pitfalls/cases/2026-11-06-trailing-newline-and-per-frame-layout.md`
+- [ ] 第十五 + 十六轮提交
 - [ ] `--rotate` 最终值仍没定（候选 25/30/45）
 - [ ] `tools/deploy.sh` 支持 hpopi5b 落点（现在仍指向 hphelm 的 `/usr/local/bin`）
 - [ ] CPU 预算收口（见 Blockers —— 数字口径已经变了，要先重定「预算怎么量」）
@@ -29,12 +32,14 @@
 
 ## Code state
 
-`main` @ `001cc1e` + 第十五轮未提交改动 · 第十五轮已部署到 hpopi5b（2026-11-06 17:1x）。
+`main` @ `001cc1e` + 第十五/十六轮未提交改动 · 第十六轮已部署到 hpopi5b（2026-11-06 18:1x）。
 现场：`hpopi5b-kiosk` active · `pgrep -cx hpopi5b-panel` = 1 · **tty1** active ·
 slick-greeter 0 · 无 X 错误 · 二进制与探针都与 `/tmp/panelb` 构建产物 sha256 一致。
 判据：`probe-frames 60` ⇒ **>30% 变化帧 0**；`LAYOUT_DEBUG=1` ⇒ `wa=399.2 ch=135.4 FIX_A=187 FIX_B=187 余=0.0`；
 单榜 25 行、尾网块 9 台（7 在线 / 2 离线、`直连 4 · 中继 2`）、`bottom = 712`；CPU 90s ⇒ **3.43%**、`VmRSS 20.4 MB`。
 **CPU A/B（真屏 :0，`performance` 模式 1.8 GHz，各 60s）**：旧三列 **3.47%** → 新单机 **3.68%**。
+第十六轮（趋势幕流式两列）：旧 **3.47/3.10** → 新 **3.97/3.12**（+0.25pp 量级，噪声内）；
+单帧绘制（趋势幕单幕、`HPOPI5B_PANEL_DEBUG=1` 的「绘制 Xms」中位）旧 **19.4ms** → 首版 29.0ms → 缓存后 **23.1ms**。
 ⚠️ 同一份二进制在 `ondemand` 空载（408 MHz）下量到 **5.8%** —— 频率让 CPU-秒差 5 倍，**只做 A/B 比**。
 第七轮到第十二轮的逐轮记录在 `.ai/sessions/2026-11-05-rounds-7-to-12-handoff.md`。
 

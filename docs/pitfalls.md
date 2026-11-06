@@ -245,3 +245,47 @@ PATH=/tmp/fakebin:$PATH ./hpopi5b-panel --state panel --remote hpcore
 ```
 
 **判据**：`pkill -x hpopi5b-panel` 后 `tail /tmp/hpopi5b-panel.log` 必须能看到上面这两种行。
+
+---
+
+## F. 2026-11-06 趋势幕「填满整屏」那一轮
+
+### 22. 先按 `\t` 切列、再去行尾 `\n` ⇒ 每段描述都多背一个换行
+
+`load()` 原来是「`strtok`/手写指针把 `\t` 换成 NUL → 再用 `line[strcspn(line, "\r\n")] = 0` 去行尾」。
+`strcspn` 遇 NUL 就停 ⇒ **行尾的 `\n` 从来没被去掉**，它挂在最后一个字段（描述）的尾巴上。
+
+后果不是「多一个字符」，而是**多一行**：`pango` 把结尾的 `\n` 当硬换行，于是每条描述都变成
+「文字 + 空行」两行 —— 量出来 `H_DESC` 是 48 而不是 24，流式排版每条多算 24 像素，
+两列都排不满、下半屏空一大块，而屏幕上**看起来完全正常**（空行不可见）。
+
+**判据**（10 秒可查）：
+
+```sh
+# 描述字段的行数：期望 1 行文字，实际会量出 2 行
+LAYOUT_DEBUG=1 ./hpopi5b-panel --state panel --scene trending 2>&1 | grep H_DESC
+# H_DESC=48.0 ⇒ 中招；H_DESC=24.0 ⇒ 干净
+```
+
+**正解**：把「去行尾 `\r\n`」提到**切列之前**（`src/scene_trending.c` 的 `load()`，带注释）。
+顺序敏感的字符串改写，一律先做「整行级」的，再做「字段级」的。
+
+### 23. 1 Hz 重画下，每帧重新排版 = 白烧 CPU（趋势幕 +1.5% of one core）
+
+面板闲时也**每秒重画一次**（`content_sig()` 里 `FEED.age_s` 每秒变，`state==ST_PANEL` 就重排）。
+所以 `draw()` 里任何「每次都重量一遍」的动作都会被放大 60 倍：
+
+- 15 段长描述各来一次 `v_text_measure` ⇒ 绘制 19.5ms → 29.0ms/帧（实测）
+- 每行仓库名用二分截断（最多 8 次整形）⇒ 又 100+ 次 pango 整形/帧
+
+**判据**（用 `HPOPI5B_PANEL_DEBUG=1` 的「绘制 Xms」，别用整机 CPU%）：
+
+```sh
+# A/B：旧二进制由 SIGUSR2 强制 1 次/秒重画，新二进制本来就会重画
+ssh hpopi5b '/tmp/drawcost.sh bprev/hpopi5b-panel prev 1; /tmp/drawcost.sh bnew/hpopi5b-panel new 0'
+# 期望两行中位数差 ≤ 2ms；差 9.5ms 就是没缓存
+```
+
+**正解**：`scene_trending.c` 里一张**排版计划缓存** `plan`（键 = 列宽 + 缓存文件 `mtime`/`size` + 条数），
+把「行高、截断后的仓库名、语言/涨星文字及其宽度、语言分布那一行」全部只在数据变化时算一次。
+**纪律**：`draw()` 里只允许做「不缓存就没法画」的排版；能量的一次都不许每帧量。

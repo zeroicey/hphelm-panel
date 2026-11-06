@@ -177,8 +177,10 @@ HPOPI5B_PANEL_DEBUG=1 …            # 主循环仪表：it/s · poll 结果 · 
 
 ### 多幕（一块屏不只显示一种东西）
 
-面板是**幕**的一个实现，目前两幕：`panel`（单机双子列 + 尾网块 + 进程榜）· `trending`（GitHub 趋势，**两列 10 条、
-描述两行**）。`--kiosk` 下默认每 **30 s** 淡出淡入换一幕；桌面/锁屏模式默认**不轮换**。
+面板是**幕**的一个实现，目前两幕：`panel`（单机双子列 + 尾网块 + 进程榜）· `trending`（GitHub 趋势，
+**流式两列**：按每条描述实际占 1~2 行算高度、再把两列零头均摊进行距（上限 8 像素），标题行给
+「N 分钟前同步 · 共 M 条 · 今日 +X★」，右列尾部挂一行**语言分布**脚注（计数 + 单色相 alpha 递降堆叠条））。
+`--kiosk` 下默认每 **30 s** 淡出淡入换一幕；桌面/锁屏模式默认**不轮换**。
 加一幕 = 新建 `src/scene_*.c` + 在 `scenes.c` 的表里加一行，别的不动。
 
 ### 白天 / 夜间主题
@@ -225,7 +227,7 @@ src/view_login.c    登录页版面（无卡片、居中）
 src/scene.h         幕的接口：draw + 自己的内容签名（不碰 X）
 src/scenes.c        幕的注册表 + 轮换调度 + 转场推进（纯逻辑）
 src/scene_panel.c   幕「运维面板」（转调 view_panel.c）
-src/scene_trending.c 幕「GitHub 趋势」（只读缓存 TSV，缺文件时给空态）
+src/scene_trending.c 幕「GitHub 趋势」（只读缓存 TSV，缺文件时给空态；流式两列 + 排版计划缓存）
 tools/fetch-trending.py GitHub Trending 抓取器（无依赖，python3）
 systemd/        hpopi5b-trending.{service,timer}（每 3 小时同步一次榜单）
 src/auth.[ch]       与 setuid 助手通信（密码只走 stdin）

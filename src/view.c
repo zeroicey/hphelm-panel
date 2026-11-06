@@ -91,6 +91,30 @@ double v_text_wrap(cairo_t *cr, double x, double y, PangoFontDescription *fd, ui
     return (double)r.height / PANGO_SCALE;
 }
 
+/* 只量不画：按 maxw 折行、最多 maxlines 行时这段文字占多高（逻辑像素）。
+ * 流式排版（行高随内容变）必须先量后画 —— 否则没法算出下一行的 y。
+ * 折行参数与 v_text_wrap 完全一致，量出来的值才能和画出来的对齐。 */
+double v_text_measure(PangoFontDescription *fd, double maxw, int maxlines, const char *s) {
+    pango_layout_set_font_description(g_lay, fd);
+    pango_layout_set_width(g_lay, (int)(maxw * PANGO_SCALE));
+    pango_layout_set_wrap(g_lay, PANGO_WRAP_WORD_CHAR);
+    pango_layout_set_ellipsize(g_lay, PANGO_ELLIPSIZE_NONE);
+    pango_layout_set_height(g_lay, -1);
+    pango_layout_set_text(g_lay, s, -1);
+    /* ⚠️ 不要用 pango_layout_set_height(-maxlines) 来「量」：
+     *    配了 ellipsize 之后它会把布局**多撑一行**（实测 1 行文字量出 2 行、2 行量出 3 行），
+     *    差一行就等于每行都多留 24 像素空白 —— 流式排版会因此少排一整条。
+     *    正确做法：不限高、不省略，数折行数，再按「每行高 × 实际用到的行数」算。 */
+    int lines = pango_layout_get_line_count(g_lay);
+    PangoRectangle r;
+    pango_layout_get_extents(g_lay, NULL, &r);
+    pango_layout_set_width(g_lay, -1);
+    pango_layout_set_wrap(g_lay, PANGO_WRAP_WORD);
+    if (lines <= 0) return 0;
+    int use = lines < maxlines ? lines : maxlines;
+    return (double)r.height / PANGO_SCALE / lines * use;
+}
+
 /* 排版一次 = 一次 pango 整形。实测一帧要整形 100+ 次（两台主机 + 24 行进程），
  * 每帧 5~10ms ⇒ 1 Hz 重绘就是 0.5~1% of one core。
  * ⚠️ 所以「右对齐/居中」**必须复用这一次排版**去取宽度：

@@ -48,6 +48,9 @@ PangoFontDescription *v_fd_huge(void);
 void v_set_rgb(cairo_t *cr, uint32_t rgb, double a);
 double v_text_w(PangoFontDescription *fd, const char *s);
 double v_text_h(PangoFontDescription *fd, const char *s);
+/* 只量不画：按 maxw 折行、最多 maxlines 行时这段文字占多高（逻辑像素）。
+ * 「行高随内容变」的流式排版必须先量后画。 */
+double v_text_measure(PangoFontDescription *fd, double maxw, int maxlines, const char *s);
 double v_text_wrap(cairo_t *cr, double x, double y, PangoFontDescription *fd, uint32_t rgb,
                    double maxw, int maxlines, const char *fmt, ...);
 double v_text(cairo_t *cr, double x, double y, PangoFontDescription *fd, uint32_t rgb,

@@ -26,14 +26,20 @@ typedef struct {
     double cpu_pct;   /* 自上次采样以来的 CPU 占用（可为 100 以上：多线程进程） */
 } proc_row_t;
 
-/* 一个容器一行（2026-11-06：用户要求「把 Docker 容器都列出来，显示资源占用」）
- * 数值来自 cgroup v2（memory.current / cpu.stat），名字来自 docker.sock。 */
-#define CTRN 12
+/* 尾网上的一台设备（2026-11-06 第二版：先做过「容器清单」，用户指出
+ * 「容器好像不就是进程吗 那算了」⇒ 换成 tailnet：谁在线、走直连还是中继、此刻在传多少）。
+ * 数据只来自 tailscaled 的 localapi（/var/run/tailscale/tailscaled.sock，世界可读），
+ * **不 fork tailscale CLI**，也不需要 root。 */
+#define TSN 12
 typedef struct {
     char name[24];
-    double mem_mb;
-    double cpu_pct;   /* 同样可为 100 以上 */
-} ctr_row_t;
+    char os[10];      /* linux / macOS / windows / iOS / android */
+    char relay[12];   /* DERP 区域名（hpnet / hkg / syd）；空 = 不知道 */
+    int online;
+    int direct;       /* 1 = 有直连地址；0 = 纯 DERP 中继 */
+    double last_s;    /* 离线了多久（秒）；在线为 0 */
+    double rx_bps, tx_bps; /* 此刻速率（探针按相邻两次累计值求差） */
+} ts_peer_t;
 
 /* ---- 一台主机的指标快照 ----
  * 本机与生产服务器共用这一个结构（同一个 draw_host() 画两遍 ⇒ 两台版面/口径必然对称）。
@@ -81,12 +87,14 @@ typedef struct {
     int ntop;
     proc_row_t top_cpu[TOPN];  /* 按 CPU% 降序（面板右列就是它） */
     int ntop_cpu;
-    /* 容器（-1 = 不知道 / 没有 docker） */
+    /* 容器个数（-1 = 不知道 / 没有 docker）。只数个数，不列清单。 */
     int ndocker;
-    ctr_row_t ctr[CTRN];       /* 按内存降序的前几条 */
-    int nctr;                  /* ctr[] 里有效几条 */
-    int nctr_total;            /* 这台机一共几个容器 */
-    double ctr_mem_total_mb;   /* 所有容器内存合计（面板标题右侧「合计 x」用） */
+    /* 尾网：ts_ok = 探针的 T 行到了；本机模式下恒为 0 ⇒ 面板不画这一块 */
+    int ts_ok;
+    int ts_total, ts_online;   /* 联网设备总数 / 在线数（含本机） */
+    char ts_self_ip[24];       /* 本机 tailscale IPv4 */
+    ts_peer_t ts[TSN];         /* 对端（不含本机），在线优先、再按流量降序 */
+    int nts;                   /* ts[] 里有效几条 */
     /* 历史曲线 */
     ring_t cpu_hist;
     ring_t mem_hist;

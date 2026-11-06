@@ -344,42 +344,77 @@ static void draw_host(cairo_t *cr, const metrics_t *m, const view_feed_t *feed,
                 (bottom - L_BODY_Y - L_H_CAP_H) - (FIX_A + 2 * (ch + L_H_CHART_GAP)));
 }
 
-/* ============================ 容器块 ============================
- * 2026-11-06 第二版（用户口径：「可以把我们的 Docker 容器都列出来呀，搞一块地方显示资源占用」）。
- * 位置：主机区下面，横跨主机区整宽，与主机区一样切成左右两个子列（各 5 个）。
- *   容器  23 个  合计 3.4G                    内存 / CPU（近 3 秒）
- *   magpie              933M   325.7%      cormorant-browser-1   869M   0.1%
- *   …
- * 数据从探针的 D 行来（cgroup v2 + docker.sock 取名字）。没容器时整块不画，曲线自己长回去。
+/* ============================ 尾网块 ============================
+ * 2026-11-06 第三版：这块位置上一版放的是「容器清单」，用户说
+ * 「容器好像不就是进程吗 那算了 不要了 换成别的吧」⇒ 换成 Tailscale 尾网。
+ * 位置：主机区下面（尾网是从别的设备看这台机的入口），横跨主机区整宽，切成左右两个子列（各 5 台）。
+ *   Tailscale  9 台 · 7 在线  本机 100.64.0.1              直连 5 · 中继 2
+ *   hpazure    linux   直连            ↓16.4K ↑6.9K
+ *   hpcell     iOS     离线            2h 前
+ * 没数据（本机模式 / 老探针 / tailscaled 没起来）⇒ ts_h = 0，整块不画，曲线自己长回去。
  */
-static void draw_ctr_block(cairo_t *cr, const metrics_t *m, double x, double y, double w,
-                           double sub_gap) {
-    char b1[24];
-    double tw = v_text(cr, x, y, v_fd_title(), C_GREEN, "容器");
-    double ax = x + tw + 10;
-    ax += v_text(cr, ax, y + 1, v_fd_label(), C_OVERLAY1, "%d 个", m->nctr_total) + 12;
-    v_fmt_mb(m->ctr_mem_total_mb, b1, sizeof b1);
-    v_text(cr, ax, y + 1, v_fd_small(), C_OVERLAY0, "合计 %s", b1);
-    v_text_right(cr, x + w, y + 2, v_fd_small(), C_OVERLAY0, "内存 / CPU（近 3 秒）");
-    y += L_CTR_TITLE_H;
+static void fmt_age(char *out, size_t n, double s) {
+    if (s < 60) snprintf(out, n, "%.0fs 前", s);
+    else if (s < 3600) snprintf(out, n, "%.0fm 前", s / 60);
+    else if (s < 86400) snprintf(out, n, "%.0fh 前", s / 3600);
+    else snprintf(out, n, "%.0fd 前", s / 86400);
+}
 
+static void draw_ts_block(cairo_t *cr, const metrics_t *m, double x, double y, double w,
+                          double sub_gap) {
+    int ndirect = 0, nrelay = 0;
+    for (int i = 0; i < m->nts; i++) {
+        if (!m->ts[i].online) continue;
+        if (m->ts[i].direct) ndirect++;
+        else nrelay++;
+    }
+    double tw = v_text(cr, x, y, v_fd_title(), C_GREEN, "Tailscale");
+    double ax = x + tw + 10;
+    ax += v_text(cr, ax, y + 1, v_fd_label(), C_OVERLAY1, "%d 台 · %d 在线", m->ts_total,
+                 m->ts_online) +
+          14;
+    if (m->ts_self_ip[0]) v_text(cr, ax, y + 1, v_fd_small(), C_OVERLAY0, "本机 %s", m->ts_self_ip);
+    if (m->nts > 0)
+        v_text_right(cr, x + w, y + 2, v_fd_small(), C_OVERLAY0, "直连 %d · 中继 %d", ndirect,
+                     nrelay);
+    y += L_TS_TITLE_H;
+
+    if (m->nts == 0) {
+        v_text(cr, x, y, v_fd_small(), C_OVERLAY0, "（没有对端设备）");
+        return;
+    }
     const double wa = (w - sub_gap) / 2;
-    for (int i = 0; i < m->nctr && i < 2 * L_CTR_ROWS; i++) {
-        int col = i / L_CTR_ROWS, row = i % L_CTR_ROWS;
+    for (int i = 0; i < m->nts && i < 2 * L_TS_ROWS; i++) {
+        int col = i / L_TS_ROWS, row = i % L_TS_ROWS;
         double cx = x + col * (wa + sub_gap);
-        double ry = y + row * L_CTR_ROW_H;
-        char nm[40], mb[24], cpu[16];
-        const ctr_row_t *c = &m->ctr[i];
-        /* 名称：给右边的数字留 118px（内存 62 + CPU 56） */
-        v_truncate_mono(nm, sizeof nm, c->name, v_fd_proc(), wa - 126);
-        v_text(cr, cx, ry, v_fd_proc(), C_TEXT, "%s", nm);
-        v_fmt_mb(c->mem_mb, mb, sizeof mb);
-        v_text_right(cr, cx + wa - 58, ry, v_fd_proc(), C_OVERLAY1, "%s", mb);
-        /* CPU 可以是 300%+（多线程容器）：<100 保留一位小数，≥100 取整 */
-        if (c->cpu_pct < 100.0) snprintf(cpu, sizeof cpu, "%.1f%%", c->cpu_pct);
-        else snprintf(cpu, sizeof cpu, "%.0f%%", c->cpu_pct);
-        uint32_t cc = c->cpu_pct > 80 ? C_PEACH : C_OVERLAY1;
-        v_text_right(cr, cx + wa, ry, v_fd_proc(), cc, "%s", cpu);
+        double ry = y + row * L_TS_ROW_H;
+        const ts_peer_t *p = &m->ts[i];
+        char nm[40], r1[16], r2[16], both[40], age[24];
+        /* 列位从右往左算：速率 100 → 连接方式 62 → 系统 52 → 名字吃剩下的。
+         * 系统名要**右对齐**：`windows` 比槽位宽，左对齐会顶到「中继 hpnet」上（第一版就这样叠字了）。 */
+        const double x_rate = cx + wa - 100.0;
+        const double x_conn = x_rate - 8.0 - 62.0;
+        const double x_os = x_conn - 8.0 - 52.0;
+        v_truncate_mono(nm, sizeof nm, p->name, v_fd_proc(), x_os - cx - 8.0);
+        v_text(cr, cx, ry, v_fd_proc(), p->online ? C_TEXT : C_OVERLAY0, "%s", nm);
+        v_text_right(cr, x_conn - 8.0, ry + 1, v_fd_small(), C_OVERLAY0, "%s", p->os);
+        if (!p->online) {
+            v_text_right(cr, x_conn + 62.0, ry + 1, v_fd_small(), C_OVERLAY0, "离线");
+            fmt_age(age, sizeof age, p->last_s);
+            v_text_right(cr, cx + wa, ry + 1, v_fd_small(), C_OVERLAY0, "%s", age);
+            continue;
+        }
+        if (p->direct) v_text_right(cr, x_conn + 62.0, ry + 1, v_fd_small(), C_TEAL, "直连");
+        else if (p->relay[0])
+            v_text_right(cr, x_conn + 62.0, ry + 1, v_fd_small(), C_OVERLAY1, "中继 %s",
+                         p->relay);
+        else v_text_right(cr, x_conn + 62.0, ry + 1, v_fd_small(), C_OVERLAY1, "中继");
+        /* 速率：两边都放得下就都放，放不下就只留下行 */
+        v_fmt_rate(p->rx_bps, r1, sizeof r1);
+        v_fmt_rate(p->tx_bps, r2, sizeof r2);
+        snprintf(both, sizeof both, "↓%s ↑%s", r1, r2);
+        if (v_text_w(v_fd_small(), both) > 100.0) snprintf(both, sizeof both, "↓%s", r1);
+        v_text_right(cr, cx + wa, ry + 1, v_fd_small(), C_OVERLAY1, "%s", both);
     }
 }
 
@@ -408,16 +443,15 @@ void view_panel_draw(cairo_t *cr, const view_ctx_t *v, const metrics_t *m,
     v_set_rgb(cr, C_SURFACE1, 0.35);
     cairo_fill(cr);
 
-    /* 纵向：主机块（含它自己的时间轴说明行）在上，容器块贴着底部；
-     * 没有容器时 ctr_h = 0 ⇒ 曲线自己长回去（不超过 L_H_CHART_MAX）。 */
-    const double ctr_h = m->nctr > 0
-                             ? (L_CTR_GAP + L_CTR_TITLE_H + L_CTR_ROWS * L_CTR_ROW_H +
-                                L_CTR_PAD_B)
-                             : 0.0;
-    const double host_bottom = bottom - ctr_h;
+    /* 纵向：主机块（含它自己的时间轴说明行）在上，尾网块贴着底部；
+     * 没有尾网数据时 ts_h = 0 ⇒ 曲线自己长回去（不超过 L_H_CHART_MAX）。 */
+    const double ts_h = m->ts_ok
+                            ? (L_TS_GAP + L_TS_TITLE_H + L_TS_ROWS * L_TS_ROW_H + L_TS_PAD_B)
+                            : 0.0;
+    const double host_bottom = bottom - ts_h;
     draw_host(cr, m, feed, target, x_host, host_w, host_bottom);
-    if (m->nctr > 0)
-        draw_ctr_block(cr, m, x_host, host_bottom + L_CTR_GAP, host_w, L_SUB_GAP);
+    if (m->ts_ok)
+        draw_ts_block(cr, m, x_host, host_bottom + L_TS_GAP, host_w, L_SUB_GAP);
 
     /* ---------- 进程榜（一整列一条榜；行数由可用高度算出来，空着比留白好） ---------- */
     char lbl[80];

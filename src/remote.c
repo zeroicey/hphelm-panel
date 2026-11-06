@@ -350,35 +350,48 @@ static void parse_P(metrics_t *m, char *rest) {
 
 static void parse_Q(metrics_t *m, char *rest) { parse_list(rest, m->top_cpu, &m->ntop_cpu); }
 
-/* ---- 容器：D <总数> <合计MiB> <name>:<memMiB>:<cpu%>,... ---- */
-static int parse_ctr_row(char *seg, ctr_row_t *row) {
-    char *c1 = strchr(seg, ':');
-    if (!c1) return 0;
-    char *c2 = strchr(c1 + 1, ':');
-    if (!c2) return 0;
-    *c1 = 0;
-    *c2 = 0;
-    snprintf(row->name, sizeof row->name, "%s", seg);
-    row->mem_mb = tdouble(c1 + 1);
-    row->cpu_pct = tdouble(c2 + 1);
+/* ---- 尾网：T <总台数> <在线数> <本机IP> <name>:<os>:<direct>:<relay>:<online>:<last_s>:<rx_bps>:<tx_bps>,... ----
+ * 每条定长 8 段 ⇒ 按冒号切；名字里的空白/冒号/逗号在探针那边已经换成 `_`。
+ * 探针的 T 行不到（老探针、tailscaled 挂了）则 ts_ok 保持 0，面板整块不画 —— 不编数据。 */
+static int parse_ts_row(char *seg, ts_peer_t *row) {
+    char *f[8];
+    int n = 1;
+    f[0] = seg;
+    for (int i = 1; i < 8; i++) {
+        char *c = strchr(f[n - 1], ':');
+        if (!c) return 0;
+        *c = 0;
+        f[n++] = c + 1;
+    }
+    snprintf(row->name, sizeof row->name, "%s", f[0]);
+    snprintf(row->os, sizeof row->os, "%s", f[1]);
+    row->direct = (int)tlong(f[2]);
+    snprintf(row->relay, sizeof row->relay, "%s", f[3]);
+    row->online = (int)tlong(f[4]);
+    row->last_s = tdouble(f[5]);
+    row->rx_bps = tdouble(f[6]);
+    row->tx_bps = tdouble(f[7]);
     return 1;
 }
 
-static void parse_D(metrics_t *m, char *rest) {
+static void parse_T(metrics_t *m, char *rest) {
     char *p = rest, *o;
-    m->nctr = 0;
+    m->nts = 0;
     if (!tok(&p, &o)) return;
-    m->nctr_total = (int)tlong(o);
+    m->ts_total = (int)tlong(o);
     if (!tok(&p, &o)) return;
-    m->ctr_mem_total_mb = tdouble(o);
+    m->ts_online = (int)tlong(o);
+    if (!tok(&p, &o)) return;
+    snprintf(m->ts_self_ip, sizeof m->ts_self_ip, "%s", o);
     while (*p == ' ') p++;
-    while (*p && m->nctr < CTRN) {
+    while (*p && m->nts < TSN) {
         char *end = strchr(p, ',');
         if (end) *end = 0;
-        if (parse_ctr_row(p, &m->ctr[m->nctr])) (m->nctr)++;
+        if (parse_ts_row(p, &m->ts[m->nts])) (m->nts)++;
         if (!end) break;
         p = end + 1;
     }
+    m->ts_ok = 1;
 }
 
 /* 返回 1 = 这一帧提交了 */
@@ -448,7 +461,7 @@ int remote_read(remote_t *r, double now) {
         else if (line[0] == 'C' && line[1] == ' ') parse_C(&r->stg, line + 2);
         else if (line[0] == 'P' && line[1] == ' ') parse_P(&r->stg, line + 2);
         else if (line[0] == 'Q' && line[1] == ' ') parse_Q(&r->stg, line + 2);
-        else if (line[0] == 'D' && line[1] == ' ') parse_D(&r->stg, line + 2);
+        else if (line[0] == 'T' && line[1] == ' ') parse_T(&r->stg, line + 2);
         else if (line[0] == 'E') {
             if (commit(r, now)) committed = 1;
         }

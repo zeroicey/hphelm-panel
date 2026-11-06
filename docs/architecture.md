@@ -103,17 +103,20 @@ hpopi5b-panel ──fork/exec──▶ ssh -T <target> 'perl -'   ──▶ 被�
 | `C` | `core0% core1% …`（ncore 个） |
 | `P` | `nproc pid:rssMiB:cpu%:name,…`（每帧，按 RSS 取 24 条） |
 | `Q` | `pid:rssMiB:cpu%:name,…`（每 3 秒，按 CPU 降序取 **40** 条，**无阈值** ⇒ 空载时自动退化成内存榜） |
-| `D` | `总数 合计MiB name:memMiB:cpu%,…`（每 3 秒，按内存降序取 **12** 个容器） |
+| `T` | `总台数 在线数 本机IP name:os:直连0\|1:DERP区域:在线0\|1:离线秒:rxBps:txBps,…`（每 3 秒，在线优先再按流量降序取 **10** 台；本行来自 tailscaled 的 localapi） |
 | `E` | 一帧结束 ⇒ **只有收到 E 才提交** |
 
-`P`/`Q`/`D` 的多字段格式是 2026-11-06 起的新格式；面板这边按**冒号段数**兼容老的 3 字段
+`P`/`Q`/`T` 的多字段格式是 2026-11-06 起的新格式；面板这边按**冒号段数**兼容老的 3 字段
 `P` 格式（老探针没有 CPU% ⇒ `cpu_pct = -1` ⇒ 该列显示「-」，不显示假 0）。
-`D` 行的容器名来自 **docker.sock**（`GET /containers/json?all=1`，缓存 300s），
-内存/CPU 来自 cgroup v2 的 `docker-*.scope/{memory.current,cpu.stat}` ——
-**不用容器名就能算的资源一律不碰 socket**，socket 只用来把 64 位 ID 翻成名字（翻不到就显示前 12 位）。
-`cpu%` 是「上一帧到这一帧」的瞬值，1.0 = 占满一个核，容器可以是 300%（多线程）。
-探针内部按 `pid → 上帧 utime+stime`（`%ctr_usec` 同法记 cgroup 的 `usage_usec`）记忆差值算 CPU%
-（`USER_HZ` 恒 100、帧间隔 <1s 时不算），所以 `Q`/`D` 行都是「上一帧到这一帧」的瞬时占用，不是平均值。
+`T` 行来自 **tailscaled 的 localapi**（`GET /localapi/v0/status`，走 `/var/run/tailscale/tailscaled.sock`，
+权限 0666 ⇒ 不需要 root），**不 fork `tailscale status`**（那要起一个进程、几百毫秒，1 Hz 的探针扛不住）。
+⚠️ JSON 里对端列表的键是 **`Peer`（单数）**——写成 `Peers` 会**静默**得到 0 台。
+`直连0|1` 由 `CurAddr` 是否为空判定；`离线秒` 由 `LastSeen`（RFC3339 带纳秒）算；速率是相邻两次
+`RxBytes`/`TxBytes` 累计值的差除以帧间隔 ⇒ 与 `Q` 行同为**瞬时**值。tailscaled 临时不可用时探针沿用上一帧的
+`T` 行（宁可数据旧，不要闪空）。
+`cpu%` 是「上一帧到这一帧」的瞬值，1.0 = 占满一个核，进程可以是 300%（多线程）。
+探针内部按 `pid → 上帧 utime+stime` 记忆差值算 CPU%（`USER_HZ` 恒 100、帧间隔 <1s 时不算），
+所以 `Q` 行是「上一帧到这一帧」的瞬时占用，不是平均值。
 面板不再画「按内存」那一段（用户说「两个一模一样的进程列表」），`P` 行留着只作调试用。
 
 **四条设计约束**：

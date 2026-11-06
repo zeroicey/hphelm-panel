@@ -1,18 +1,83 @@
 # 交接：hpopi5b-panel（运维面板 + 自研锁屏）
 
-> **本轮状态（第十四轮：面板第二版，2026-11-06 下午）**：`hpcmd` 下线后单机化已上线，
-> 用户又提四条：「两个一模一样的进程 列表」「一个折线图占位太多了」「先把那个进程列表搞定」
-> 「可以把我们的 Docker 容器都列出来呀，搞一块地方显示资源占用」。
-> ⇒ 进程榜从「按内存 12 + 按 CPU 12」两段合成**一整列一条榜（25 行，按 CPU%，同值比 RSS）**；
-> 曲线高度上限 260 → **150**；主机区下面加**容器块**（横跨主机区，两个子列各 5 个，
-> 名字 + 内存 + CPU%，数据来自探针新增的 `D` 行：cgroup v2 + docker.sock 翻名字）。
-> 主机区宽度占比 0.56 → 0.66（进程榜只剩三列，太宽会空），1080p 实测 `ch = 138.4`、`余 = 0.0`。
+> **本轮状态（第十五轮：容器块 → Tailscale 尾网块，2026-11-06 傍晚）**：第十四轮上线的容器清单被用户否掉
+> （「不对啊 容器好像不就是进程吗 那算了 不要了 换成别的吧 你看看可以显示 tailscale 的相关东西 看看怎么做比较好」）。
+> ⇒ 同一块位置换成 **Tailscale 尾网**：两个子列各 5 台，名字 · 系统 · `直连`/`中继 <DERP区域>` ·
+> 此刻收发速率（离线设备「离线 · Nh 前」）；标题行给「9 台 · 7 在线」「本机 100.64.0.1」「直连 4 · 中继 2」。
+> 数据来自 **tailscaled 的 localapi**（unix socket 读 JSON），**不 fork `tailscale status`**、不需要 root。
+> 容器那套（`D` 行 / `docker.sock` / `ctr_*` / `draw_ctr_block` / `L_CTR_*`）**全部删除**，
+> 只留下「容器 N」这个计数（cgroup 目录数，不碰 socket）。
 >
-> **前几轮**：第十三轮单机化（本机 │ 生产 两列 → 单机双子列 + 进程榜整列，`remote2` 废弃）·
+> **前几轮**：第十四轮一条进程榜 + 容器块（容器块**已被本轮取代**）· 第十三轮单机化（`remote2` 废弃）·
 > 第七轮双主机三列（**已被取代**）· 第六轮部署链本土化 · 第十二轮第 4 格曲线换磁盘 I/O ·
 > 更早：桌面↔面板↔登录跑通 → 消闪（离屏 pixmap）→ 修自激空转 → 无卡片紧凑版式。
 >
-> **最后更新：2026-11-06（第十四轮：一条进程榜 + 容器块 + 曲线降高）。**
+> **最后更新：2026-11-06（第十五轮：容器块 → Tailscale 尾网块）。**
+
+---
+
+## 第十五轮：容器块换成 Tailscale 尾网块（2026-11-06 傍晚）
+
+**用户口径**（m01132）：「不对啊 容器好像不就是进程吗 那算了 不要了 换成别的吧
+你看看可以显示 tailscale 的相关东西 看看怎么做比较好」
+
+**为什么「容器就是进程」这个判断在这里是对的**：容器里的进程**本来就出现在 `/proc` 里**（hpcore 上
+`magpie` 的 pid 1818752 同时出现在进程榜和容器清单里），所以「容器清单」和进程榜在高负载时信息高度重复；
+真正只有 cgroup 能给出的增量是**聚合口径**（一个容器 = 一堆进程之和），而面板已经用进程榜表达了同样的东西。
+
+**尾网比容器清单更值得占这块版面**：hpcore 是机队唯一的入口，7 台设备从这里进出（手机/平板/笔记本/
+两台云主机），「谁在线、走直连还是绕 DERP、此刻在传多少」是日常真正要看的；而且这些信息**进程榜完全看不到**。
+
+**怎么做（数据通路）**
+
+- **只读 localapi**：`GET /localapi/v0/status`，走 `/var/run/tailscale/tailscaled.sock`
+  （权限 0666 ⇒ 不需要 root）。`IO::Socket::UNIX` + `HTTP/1.0` + `Connection: close`，
+  与 docker.sock 那套同样的写法，但**不 fork CLI**（`tailscale status` 要起一个进程、几百毫秒）。
+- ⚠️ **JSON 里对端列表的键是 `Peer`（单数）**，不是 `Peers` —— 写成 `Peers` 会静默得到 0 台（我第一次就踩了）。
+- 每台：`HostName` / `OS` / `Online` / `CurAddr`（非空 = 直连）/ `Relay`（DERP 区域）/ `LastSeen` / `RxBytes` / `TxBytes`；
+  自身 IP 在顶层 `TailscaleIPs[0]`。
+- 速率 = 相邻两帧累计字节差 / 帧间隔（探针每 3 秒采一次，按 nodekey 记上一次的值）。
+- `LastSeen` 是 RFC3339 带纳秒 + 时区 ⇒ 自己用 `Time::Local::timegm` 减偏移算 epoch（`JSON::PP` 是 5.14 起核心模块）。
+
+**改了什么**
+
+- `src/metrics.h`：删 `ctr_row_t`/`CTRN`/`ctr*`，加 `TSN 12` + `ts_peer_t{name, os, relay, online, direct, last_s, rx_bps, tx_bps}`
+  + `ts_ok / ts_total / ts_online / ts_self_ip / ts[] / nts`。
+- `src/remote.c`：删 `parse_D`/`parse_ctr_row`，加 `parse_ts_row`（定长 8 段）+ `parse_T`。
+- `src/theme.h`：`L_CTR_*` → `L_TS_GAP 18 / L_TS_TITLE_H 24 / L_TS_ROW_H 22 / L_TS_ROWS 5 / L_TS_PAD_B 16`。
+- `src/view_panel.c`：`draw_ctr_block` → `draw_ts_block` + `fmt_age`；`ctr_h` → `ts_h`。
+  列位从右往左算：速率 100 → 连接方式 62 → 系统 52 → 名字吃剩下的。
+- `tools/probe-remote.pl`：删容器段（`docker_names` / `containers`），加 `TS_SOCK / iso_epoch / ts_status`；
+  输出 `T <总台数> <在线数> <本机IP> <name>:<os>:<直连0|1>:<DERP区域>:<在线0|1>:<离线秒>:<rxBps>:<txBps>,…`
+  （在线优先、再按流量降序、最多 10 台；tailscaled 临时不可用时沿用上一帧，不闪空）。
+
+**判据（真屏 hpopi5b，`--scale 1.48`）**
+
+| 项 | 结果 |
+| --- | --- |
+| 编译 | hpopi5b `make panel` **0 warning / 0 error** |
+| 版面预算 | `LAYOUT_DEBUG=1` ⇒ `wa=399.2 ch=135.4 FIX_A=187 FIX_B=187 余=0.0` |
+| 尾网块 | 9 台设备（7 在线 / 2 离线）、`直连 4 · 中继 2`、离线行「3h 前 / 16h 前」、速率按帧变化 |
+| 探针 | `perl -c` OK；本机实测 `T 9 7 100.64.0.1 hpbook:macOS:1:hpnet:1:0:469:403,…`（名字/系统/区域解析正确） |
+| 不闪 | `DISPLAY=:0 tools/probe-frames 60` ⇒ `>30% 变化帧 = 0` |
+| 服务 | `is-active=active`、`pgrep -cx` = 1、`vt=tty1`、`greeter=0` |
+| 部署件一致 | `sha256sum` 构建产物 vs `/usr/local/lib/...`、探针 vs `/usr/local/share/...` 各 2 行同哈希 |
+| CPU | 90s 窗口 `utime+stime` ⇒ **3.43%**（与第十四轮 3.3~3.7% 同档；`VmRSS/VmHWM 20.4 MB`） |
+
+**踩的坑（本轮新增）**
+
+1. **JSON 键是 `Peer` 不是 `Peers`**：写错不报错、只是「0 台设备」，白查一轮。
+2. **「系统」列左对齐会叠字**：`windows` 比 38px 槽位宽，直接压到右对齐的「中继 hpnet」上；
+   改成右对齐 + 槽位 52（`pngcrop` 放大后才看清是叠字，整图缩着看不出来）。
+3. 写注释时把 socket 权限误写成占位符，已改成明文 `0666`。
+
+**留给下一轮**
+
+- 尾网块只画 10 台（`L_TS_ROWS 5 × 2`）；超过 10 台时标题行的「N 台」会大于画出来的行数（现在 9 台，不冲突）。
+- 没有出口节点（`ExitNodeStatus`）/ DERP 延迟（要 `netcheck`，那个很贵）；没有「本机自身流量」。
+- `Relay` 为空时画「中继」不带区域名（tailscaled 没给区域时的兜底）。
+- 进程榜仍是最贵的绘制项（25 行 × 2 次 pango 整形）；再降 CPU 的正解还是 PangoLayout 缓存 + 区域局部重绘。
+
 ---
 
 ## 第十四轮：一条进程榜 + 容器块 + 曲线降高（2026-11-06 下午）

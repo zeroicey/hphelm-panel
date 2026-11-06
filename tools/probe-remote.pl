@@ -15,17 +15,20 @@
 #   P <nproc> <pid>:<rssMiB>:<cpu%>:<name>,...   （每 3 秒一次，按 RSS 降序，最多 24 条；面板已不画，留给调试）
 #   Q <pid>:<rssMiB>:<cpu%>:<name>,...            （每 3 秒一次，按 CPU% 降序、同值比 RSS，最多 40 条）
 #                                                 ⚠️ 2026-11-06 起 P 行从 3 字段改成 4 字段（中间插了 cpu%
-#   D <容器总数> <合计MiB> <name>:<memMiB>:<cpu%>,...
-#                                                 （每 3 秒一次，按内存降序，最多 12 个）
+#   T <总台数> <在线数> <本机IP> <name>:<os>:<直连0|1>:<DERP区域>:<在线0|1>:<离线秒>:<rxBps>:<txBps>,...
+#                                                 （每 3 秒一次，在线优先、再按流量降序，最多 10 台；
+#                                                  来自 tailscaled 的 localapi，不 fork tailscale CLI）
 #   E                                  （一帧结束 ⇒ 只有收到 E 才提交，半帧不会被显示）
 #
 # ⛔ 三条硬约束（这台是**生产机**）：
-#   ① 只读 /proc /sys；不写文件、不装东西、不起服务、不开端口
+#   ① 只读 /proc /sys 与两个**只读** localapi（tailscaled 的 unix socket）；不写文件、不装东西、不起服务、不开端口
 #   ② 每帧成本必须远低于 1% of one core（实测 ~0.3%）
-#   ③ 名字里的 `:` `,` 要替换掉（它是 P 行的分隔符）
+#   ③ 名字里的 `:` `,` 要替换掉（它是 P/Q/T 行的分隔符）
 use strict;
 use warnings;
 use Socket;
+use JSON::PP;      # 5.14 起是核心模块
+use Time::Local;   # timegm()
 
 $| = 1;
 
@@ -102,73 +105,95 @@ sub procs {
     return (scalar @pids, $fmt->(@by_mem), $fmt->(@by_cpu));
 }
 
-# ---------------- 容器（cgroup v2 的 docker-*.scope） ----------------
-# 数值只从 cgroup 读（memory.current / cpu.stat 的 usage_usec），**不在每个周期 fork docker CLI**；
-# 名字走 docker.sock 的 GET /containers/json（缓存 5 分钟，每次一个几千字节的请求；
-# 拿不到就显示 12 位短 id —— 宁可显示短 id，也不要编一个名字）。
-# ⚠️ hpcore 的 docker root 是 /data/docker（不是 /var/lib/docker）⇒ 不去猜配置文件路径。
-my $DOCKER_SOCK = '/var/run/docker.sock';
-my %ctr_name;
-my $ctr_name_t = -1e9;
-my $have_unix  = eval { require IO::Socket::UNIX; 1 };
+# ---------------- Tailscale 尾网（tailscaled 的 localapi） ----------------
+# 只读 localapi：GET /localapi/v0/status（socket 权限 0666 ⇒ **不需要 root**），
+# **不 fork tailscale CLI**（那要起一个进程、几百毫秒，1Hz 的探针扛不住）。
+# 契约：名字/系统/区域里空白、冒号、逗号换成 `_`（T 行按冒号切字段、按逗号分记录）。
+# ⚠️ JSON 里对端列表的键是 `Peer`（单数），不是 `Peers` —— 写成 Peers 会静默得到 0 台。
+my $TS_SOCK = '/var/run/tailscale/tailscaled.sock';
+my $have_unix = eval { require IO::Socket::UNIX; 1 };
+my (%ts_rx, %ts_tx);    # nodekey => 上一帧的累计字节
+my $ts_t;               # 上一帧的时刻（秒）
+my $ts_last = '';       # 上一帧成功的 T 行；tailscaled 临时不可用时沿用，不闪空
 
-sub docker_names {
-    my $now = time;
-    return if %ctr_name && $now - $ctr_name_t < 300;
-    $ctr_name_t = $now;
-    return unless $have_unix && -S $DOCKER_SOCK;
-    my $s = IO::Socket::UNIX->new(Type => Socket::SOCK_STREAM(), Peer => $DOCKER_SOCK);
-    return unless $s;
-    print $s "GET /containers/json?all=1 HTTP/1.0\r\nHost: localhost\r\nConnection: close\r\n\r\n";
-    my $resp = do { local $/; <$s> };
-    close $s;
-    return unless defined $resp && $resp =~ /\AHTTP\/1\.[01] 200/;
-    my $i = index($resp, "\r\n\r\n");
-    return if $i < 0;
-    my $body = substr($resp, $i + 4);
-    my %new;
-    while ($body =~ /"Id":"([0-9a-f]{64})","Names":\["\/([^"]*)"/g) { $new{$1} = $2 }
-    %ctr_name = %new if %new;    # 请求失败但拿到空数组时，不覆盖旧缓存
+sub iso_epoch {
+    my ($s) = @_;
+    return undef
+        unless defined $s
+        && $s =~ /^(\d{4})-(\d\d)-(\d\d)T(\d\d):(\d\d):(\d\d)(?:\.\d+)?([+-])(\d\d):(\d\d)$/;
+    my $e = timegm($6, $5, $4, $3, $2 - 1, $1);
+    return undef unless defined $e;
+    my $off = $8 * 3600 + $9 * 60;
+    return $7 eq '+' ? $e - $off : $e + $off;
 }
 
-# 一个容器的内存/CPU 总计：按内存降序取前 12 个
-my %ctr_usec;    # id => 上一帧 usage_usec
-my $ctr_t;       # 上一帧的时间（与 procs 同节奥，3 秒）
-sub containers {
-    opendir my $cg, '/sys/fs/cgroup/system.slice' or return '';
-    my @sc = grep { /^docker-[0-9a-f]+\.scope$/ } readdir $cg;
-    closedir $cg;
-    return '' unless @sc;
-    docker_names();
+sub ts_status {
     my $now = time;
-    my $dt  = defined $ctr_t ? $now - $ctr_t : 0;
-    $ctr_t = $now;
-    my (@rows, %seen);
-    my ($total, $mem_sum) = (0, 0);
-    for my $sc (@sc) {
-        my ($id) = $sc =~ /^docker-([0-9a-f]+)\.scope$/ or next;
-        my $base = "/sys/fs/cgroup/system.slice/$sc";
-        my $mem  = trim(slurp("$base/memory.current") // '') || 0;
-        my ($usec) = (slurp("$base/cpu.stat") // '') =~ /^usage_usec (\d+)/m;
-        my $cpu = 0;
-        if (defined $usec && defined $ctr_usec{$id} && $dt > 0 && $usec >= $ctr_usec{$id}) {
-            $cpu = ($usec - $ctr_usec{$id}) / 1e6 / $dt * 100;
-        }
-        $ctr_usec{$id} = $usec if defined $usec;
-        $seen{$id} = 1;
-        $total++;
-        $mem_sum += $mem;
-        my $name = $ctr_name{$id} // substr($id, 0, 12);
-        $name =~ s/[\s;,:]/_/g;
-        push @rows, [ $mem, $name, $cpu ];
+    my $s;
+    if ($have_unix && -S $TS_SOCK) {
+        $s = IO::Socket::UNIX->new(Type => Socket::SOCK_STREAM(), Peer => $TS_SOCK);
     }
-    %ctr_usec = map { $_ => $ctr_usec{$_} } grep { $seen{$_} } keys %ctr_usec;    # 别的容器删了就丢掉
-    my @top = grep { defined } (sort { $b->[0] <=> $a->[0] } @rows)[0 .. 11];
-    my $list = join(',', map { sprintf '%s:%.1f:%.1f', $_->[1], $_->[0] / 1048576, $_->[2] } @top);
-    return sprintf 'D %d %.1f %s', $total, $mem_sum / 1048576, $list;
+    return $ts_last unless $s;
+    print $s "GET /localapi/v0/status HTTP/1.0\r\nHost: local-tailscaled.sock\r\nConnection: close\r\n\r\n";
+    my $resp = '';
+    while (1) {
+        my $n = sysread($s, my $buf, 65536);
+        last unless $n;
+        $resp .= $buf;
+        last if length $resp > 262144;    # 尾网再大也就几十 KB，防跑飞
+    }
+    close $s;
+    return $ts_last unless $resp =~ /\AHTTP\/1\.[01] 200/;
+    my $i = index($resp, "\r\n\r\n");
+    return $ts_last if $i < 0;
+    my $j = eval { JSON::PP->new->utf8->decode(substr($resp, $i + 4)) };
+    return $ts_last unless $j && ref $j eq 'HASH';
+
+    my $dt = defined $ts_t ? $now - $ts_t : 0;
+    $ts_t = $now;
+    my $peers = $j->{Peer} || {};
+    my ($total, $online) = (1, ($j->{Self}{Online} ? 1 : 0));    # 含本机
+    my (@rows, %seen);
+    for my $k (keys %$peers) {
+        my $p = $peers->{$k};
+        $total++;
+        my $on = $p->{Online} ? 1 : 0;
+        $online++ if $on;
+        my $last = 0;
+        if (!$on) {
+            my $t = iso_epoch($p->{LastSeen});
+            $last = $now - $t if defined $t && $t > 0;
+        }
+        my ($rx, $tx) = ($p->{RxBytes} // 0, $p->{TxBytes} // 0);
+        my ($rxr, $txr) = (0, 0);
+        if ($dt > 0 && defined $ts_rx{$k} && $rx >= $ts_rx{$k} && $tx >= $ts_tx{$k}) {
+            $rxr = ($rx - $ts_rx{$k}) / $dt;
+            $txr = ($tx - $ts_tx{$k}) / $dt;
+        }
+        ($ts_rx{$k}, $ts_tx{$k}) = ($rx, $tx);
+        $seen{$k} = 1;
+        my $name = $p->{HostName} // '?';
+        my $os   = $p->{OS}       // '?';
+        my $rel  = $p->{Relay}    // '';
+        my $dir  = ($p->{CurAddr} // '') ne '' ? 1 : 0;
+        for ($name, $os, $rel) { s/[\s:,;|]+/_/g }
+        push @rows, [$on, $rxr + $txr, $name, $os, $dir, $rel, $on, $last, $rxr, $txr];
+    }
+    # 已删除的设备：别让记忆表无限长
+    for my $h (\%ts_rx, \%ts_tx) {
+        my %keep = map { $_ => 1 } keys %seen;
+        %$h = map { $_ => $h->{$_} } grep { $keep{$_} } keys %$h;
+    }
+    # 在线优先，再按流量降序，最后按名字（排序稳定 ⇒ 行不会每帧乱跳）
+    my @top = (grep { defined } (sort {
+                $b->[0] <=> $a->[0] || $b->[1] <=> $a->[1] || $a->[2] cmp $b->[2]
+            } @rows)[0 .. 9]);
+    my $ip = ($j->{TailscaleIPs} && $j->{TailscaleIPs}[0]) ? $j->{TailscaleIPs}[0] : '-';
+    $ts_last = sprintf 'T %d %d %s %s', $total, $online, $ip,
+        join(',', map { sprintf '%s:%s:%d:%s:%d:%d:%.0f:%.0f', @$_[2, 3, 4, 5, 6, 7, 8, 9] } @top);
+    return $ts_last;
 }
 
-# ---------------- 网卡（有全局 IPv4 的 en* > wl* > 其它） ----------------
 sub addrv4 {
     my ($n) = @_;
     socket(my $s, PF_INET, SOCK_DGRAM, 0) or return '';
@@ -341,11 +366,11 @@ while (1) {
         }
     }
 
-    my ($nproc, $top, $topcpu, $ctr) = ('', '', '', '');
+    my ($nproc, $top, $topcpu, $ts) = ('', '', '', '');
     if ($iter % 3 == 0) {
         ($nproc, $top, $topcpu) = procs();
         $nproc_last = $nproc if $nproc ne '';
-        $ctr = containers();
+        $ts = ts_status();
     }
     $nproc = $nproc_last // 0 if $nproc eq '';
 
@@ -385,7 +410,7 @@ while (1) {
     print 'C ', join(' ', @core), "\n";
     print "P $nproc $top\n" if $top ne '';
     print "Q $topcpu\n" if $topcpu ne '';
-    print "$ctr\n" if $ctr ne '';
+    print "$ts\n" if $ts ne '';
     print "E\n";
     $iter++;
 }

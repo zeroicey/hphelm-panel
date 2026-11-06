@@ -10,17 +10,26 @@
 
 ---
 
-## 零、30 秒版（**现役：kiosk on hpopi5b，2026-11-05 实测**）
+## 零、30 秒版（**现役：kiosk on hpopi5b；源码在 hpcore，2026-11-06 起**）
 
-源码工作副本在 **hpcmd**，运行机是 **hpopi5b**（`192.168.5.106`）——**不是**本机原地部署。
+**hpcmd 已于 2026-11-06 下线**（全机队 all-in-one 到 hpcore）。现在的两段式：
+
+| 角色 | 机器 | 路径 |
+| --- | --- | --- |
+| 源码工作副本（改这里、提交、push） | **hpcore**（`192.168.5.102`，本机） | `/home/happpy/work/project/hpopi5b-panel` |
+| 构建 + 运行（arm64 kiosk） | **hpopi5b**（`192.168.5.106`） | 构建 `/root/hpopi5b-panel` · 二进制 `/usr/local/lib/hpopi5b-panel/` |
+
+⚠️ 两边都**不要**跑 `tools/deploy.sh`（它是 hphelm 时代「本机原地七阶段部署」，落点已不存在）。
+⚠️ `hpcore` 上没有 gcc/make/pkg-config ⇒ **构建只能在 hpopi5b 上做**；`hpcore` 上有 `gh` 登录态（`zeroicey`）
+⇒ 提交与 `git push` 在本机做即可。
 
 ```sh
-# ① hpcmd：改 → 提交 → push
-cd /data/dev/project/hpopi5b-panel
+# ① hpcore（本机）：改 → 提交 → push
+cd /home/happpy/work/project/hpopi5b-panel
 git add -A && git commit -m "..." && git push origin main
 
 # ② 同步到 hpopi5b 并 arm64 本地编译（`make panel`，不要 `make`）
-tar --exclude=.git -czf /tmp/panel.tgz . && scp /tmp/panel.tgz hpopi5b:/tmp/
+tar --exclude=.git --exclude='*.o' -czf /tmp/panel.tgz . && scp -q /tmp/panel.tgz hpopi5b:/tmp/
 ssh hpopi5b 'rm -rf /root/hpopi5b-panel && mkdir -p /root/hpopi5b-panel && \
   tar -xzf /tmp/panel.tgz -C /root/hpopi5b-panel && cd /root/hpopi5b-panel && make panel'
 #   ⚠️ `make` 会连带构建 setuid PAM 助手（hpopi5b-auth），kiosk 不需要 ⇒ 用 `make panel`
@@ -45,7 +54,7 @@ ssh hpopi5b 'install -m755 /root/hpopi5b-panel/hpopi5b-panel /usr/local/lib/hpop
 
 | 状态 | 屏幕上看到什么 | 谁在画 |
 | --- | --- | --- |
-| `PANEL` | 运维看板（CPU/内存/网络/每核柱/进程榜 40 条/时钟），**7×24 常亮** | `hpopi5b-panel --state panel` |
+| `PANEL` | 运维看板（CPU/内存/网络/磁盘/每核柱/进程榜 24 条/时钟），**7×24 常亮** | `hpopi5b-panel --state panel` |
 | `LOGIN` | 动键盘/鼠标 ⇒ 自绘登录页（PAM 认证） | 同一个进程，切状态 |
 | 桌面 | 认证通过 ⇒ 面板取消映射，露出 bspwm 桌面 | 面板让位 |
 | 再空闲 180s | 面板覆盖回来 | 同上 |
@@ -54,14 +63,15 @@ ssh hpopi5b 'install -m755 /root/hpopi5b-panel/hpopi5b-panel /usr/local/lib/hpop
 
 - **「更新系统屏保」= 用新的 `/usr/local/bin/hpopi5b-panel` 替换旧的，并让它重新跑起来。** 就这一件事。
 
-### 生产服务器（可选）
+### 被监控机（可选，默认 `hpcore`）
 
-面板的右列显示一台远程主机（默认 `hpcore`）。配置只有一个文件：
+面板画一台远程主机（默认 `hpcore`）；**没配就画本机**。配置只有一个文件：
 
 ```sh
 sudo tee /etc/hpopi5b-panel.conf <<'EOF'
-# 生产服务器：ssh 目标名（~/.ssh/config 里的 Host 别名）。留空/删掉这行 = 只显示本机。
+# 被监控机：ssh 目标名（~/.ssh/config 里的 Host 别名）。留空/删掉这行 = 只显示本机。
 remote=hpcore
+# remote2= 自 2026-11-06 起废弃（hpcmd 下线）：写了也不生效，只打一行提示。
 EOF
 ```
 

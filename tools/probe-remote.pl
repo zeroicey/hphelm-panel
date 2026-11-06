@@ -12,7 +12,9 @@
 #     <diskReadBps> <diskWriteBps>   （整盘 /sys/block/*/stat 求和，跳 loop/ram/zram/mtd 等）
 #   ⚠️ 新字段**只能追加在末尾**：解析器对缺失字段取 0，老探针 + 新面板不会崩。
 #   C <core0%> <core1%> ...           （ncore 个）
-#   P <nproc> <pid>:<rssMiB>:<name>,...   （每 3 秒一次，最多 24 条）
+#   P <nproc> <pid>:<rssMiB>:<cpu%>:<name>,...   （每 3 秒一次，按 RSS 降序，最多 24 条）
+#   Q <pid>:<rssMiB>:<cpu%>:<name>,...            （每 3 秒一次，按 CPU% 降序，最多 24 条；6 秒内首次为空）
+#                                                 ⚠️ 2026-11-06 起 P 行从 3 字段改成 4 字段（中间插了 cpu%）
 #   E                                  （一帧结束 ⇒ 只有收到 E 才提交，半帧不会被显示）
 #
 # ⛔ 三条硬约束（这台是**生产机**）：
@@ -54,26 +56,46 @@ sub cpu_snap {
     return (\@tot, \@busy, $n);
 }
 
-# ---------------- 进程榜（RSS 降序） ----------------
+# ---------------- 进程榜（两份：RSS 降序 / CPU 降序） ----------------
+# CPU% = 两次采样之间 utime+stime 的差 / (USER_HZ × dt) × 100，可以 >100（多线程进程）。
+# 榜的粒度就是 procs() 的调用间隔（3 秒均值）—— 面板这一项本来就 3 秒才刷一次。
+# ⚠️ 首帧没有"上一帧"⇒ 全 0，这是诚实的空态；不要用 /proc/<pid>/stat 的累计值假装瞬时占用。
+my %pj;      # pid => 上一帧的 utime+stime（jiffies）
+my $pj_t;    # 上一帧的时刻（秒）
 sub procs {
-    opendir my $d, '/proc' or return (0, '');
+    opendir my $d, '/proc' or return (0, '', '');
     my @pids = grep { /^\d+$/ } readdir $d;
     closedir $d;
-    my @rows;
+    my $hz = 100;    # USER_HZ 恒为 100（内核 ABI，与 CONFIG_HZ 无关）
+    my $now = time;
+    my $dt  = defined $pj_t ? $now - $pj_t : 0;
+    $pj_t = $now;
+    my (@all, %seen);
     for my $pid (@pids) {
         my $s = slurp("/proc/$pid/stat") // next;
         my ($comm, $rest) = $s =~ /^[^(]*\((.*)\)\s+(.*)$/s or next;
         my @f = split ' ', $rest;
+        my $jif = ($f[11] // 0) + ($f[12] // 0);    # utime/stime = 整体第 14/15 字段
+        my $d = 0;
+        $d = ($jif - $pj{$pid}) / $hz / $dt * 100 if exists $pj{$pid} && $dt > 0;
+        $seen{$pid} = $jif;
+        $d = 0 if $d < 0;    # pid 复用/jiffies 回绕
         my $rss_pages = $f[21] // 0;
-        next if $rss_pages < 128;    # < 0.5 MiB 的不进榜
-        # 名字里不允许出现空格/逗号/冒号（它们是 P 行的分隔符）
+        # 名字里不允许出现空格/逗号/冒号（它们是 P/Q 行的分隔符）
         $comm =~ s/[\s;,:]/_/g;
-        push @rows, [$rss_pages * 4, $pid, $comm];    # 4 KiB/页（x86_64）
+        push @all, [ $rss_pages * 4096, $pid, $comm, $d ];    # 4 KiB/页（x86_64/arm64）
     }
-    @rows = sort { $b->[0] <=> $a->[0] } @rows;
-    splice @rows, 24 if @rows > 24;
-    my @o = map { sprintf '%d:%.1f:%s', $_->[1], $_->[0] / 1024, $_->[2] } @rows;
-    return (scalar @pids, join(',', @o));
+    %pj = %seen;
+    # 内存榜：<0.5 MiB 不进榜（否则一屏都是 rpm 小进程）
+    my @by_mem = sort { $b->[0] <=> $a->[0] } grep { $_->[0] >= 512 * 1024 } @all;
+    splice @by_mem, 24 if @by_mem > 24;
+    # CPU 榜：≥2%（3 秒内 60ms）才进榜；否则一屏 0.1% 的噪音，不如空着
+    my @by_cpu = sort { $b->[3] <=> $a->[3] || $b->[0] <=> $a->[0] } grep { $_->[3] >= 0.1 } @all;
+    splice @by_cpu, 24 if @by_cpu > 24;
+    my $fmt = sub {
+        return join(',', map { sprintf '%d:%.1f:%.1f:%s', $_->[1], $_->[0] / 1048576, $_->[3], $_->[2] } @_);
+    };
+    return (scalar @pids, $fmt->(@by_mem), $fmt->(@by_cpu));
 }
 
 # ---------------- 网卡（有全局 IPv4 的 en* > wl* > 其它） ----------------
@@ -249,8 +271,8 @@ while (1) {
         }
     }
 
-    my ($nproc, $top) = ('', '');
-    if ($iter % 3 == 0) { ($nproc, $top) = procs(); $nproc_last = $nproc if $nproc ne '' }
+    my ($nproc, $top, $topcpu) = ('', '', '');
+    if ($iter % 3 == 0) { ($nproc, $top, $topcpu) = procs(); $nproc_last = $nproc if $nproc ne '' }
     $nproc = $nproc_last // 0 if $nproc eq '';
 
     # 线程总数：/proc/loadavg 第 4 字段 "运行中/总数"
@@ -288,6 +310,7 @@ while (1) {
         $drd_bps, $dwr_bps;
     print 'C ', join(' ', @core), "\n";
     print "P $nproc $top\n" if $top ne '';
+    print "Q $topcpu\n" if $topcpu ne '';
     print "E\n";
     $iter++;
 }

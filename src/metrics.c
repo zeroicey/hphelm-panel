@@ -330,11 +330,44 @@ static int cmp_proc(const void *a, const void *b) {
     return 0;
 }
 
+/* CPU 榜：先按占用降序，同占用再按内存降序（否则一堆 0% 的行顺序随机抖动） */
+static int cmp_proc_cpu(const void *a, const void *b) {
+    const proc_row_t *x = a, *y = b;
+    if (y->cpu_pct > x->cpu_pct) return 1;
+    if (y->cpu_pct < x->cpu_pct) return -1;
+    if (y->rss_mb > x->rss_mb) return 1;
+    if (y->rss_mb < x->rss_mb) return -1;
+    return 0;
+}
+
+/* ---- 每进程 CPU%：靠「两次 /proc/<pid>/stat 的 utime+stime 之差」算 ----------------
+ * 为什么要它：单机之后进程列下半段要按 CPU 排序（只看 RSS 会是一屏同名的 pi/codex）。
+ * 做法：静态散列表（pid % 1024）记上一帧的 jiffies，冲突就覆盖 —— 只要近似值，不要精确账。
+ * ⚠️ 不做阈值过滤：第一次采样全是 0（没有上一帧），这是诚实的空态，别拿假数据填。
+ */
+#define PJ_SLOT 1024
+static struct {
+    int pid;
+    unsigned long long jif;
+} pj[PJ_SLOT];
+static double pj_prev_t; /* 0 = 还没采过 */
+
+static double mono_s(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (double)ts.tv_sec + ts.tv_nsec / 1e9;
+}
+
 static void read_procs(metrics_t *m) {
     DIR *d = opendir("/proc");
     if (!d) return;
     struct dirent *e;
     long pagesize = sysconf(_SC_PAGESIZE);
+    double hz = sysconf(_SC_CLK_TCK);
+    if (!(hz > 0)) hz = 100;
+    double tnow = mono_s();
+    double dt_proc = pj_prev_t > 0 ? tnow - pj_prev_t : 0;
+    pj_prev_t = tnow;
     static proc_row_t all[512]; /* static：别把 20KB 放栈上（这函数每秒都会被调） */
     int n = 0;
     m->nproc = 0;
@@ -373,12 +406,33 @@ static void read_procs(metrics_t *m) {
         all[n].pid = pid;
         snprintf(all[n].name, sizeof all[n].name, "%.*s", (int)sizeof(all[n].name) - 1, comm);
         all[n].rss_mb = rss_mb;
+        /* utime(14) / stime(15) ⇒ 剩余 token 里下标 11 / 12 */
+        unsigned long long jif = (unsigned long long)atoll(tok[11]) + (unsigned long long)atoll(tok[12]);
+        int slot = pid % PJ_SLOT;
+        double d = 0;
+        if (pj[slot].pid == pid && pj_prev_t > 0 && dt_proc > 0.2)
+            d = (double)(jif - pj[slot].jif) / hz / dt_proc * 100.0;
+        pj[slot].pid = pid;
+        pj[slot].jif = jif;
+        if (d < 0) d = 0; /* pid 复用/jiffies 回绕：宁可显示 0，也不显示负 CPU */
+        all[n].cpu_pct = d;
         n++;
     }
     closedir(d);
     qsort(all, n, sizeof all[0], cmp_proc);
     m->ntop = n < TOPN ? n : TOPN;
     for (int i = 0; i < m->ntop; i++) m->top[i] = all[i];
+    /* 第二份榜：按 CPU% 降序（同一批行，只换排序）。阈值 0.1%：
+       进程榜这一段在面板上占 12 行，宁可填满（末尾几行是 0.1~0.3%）也不留白 —— 空一行
+       就意味着「这块没数据」，而实际上只是阈值太高。真为 0 的（老探针没有这一列、
+       或这一秒完全没跑）仍然不进榜。 */
+    qsort(all, n, sizeof all[0], cmp_proc_cpu);
+    int nc = 0;
+    for (int i = 0; i < n && nc < TOPN; i++) {
+        if (all[i].cpu_pct < 0.1) break;
+        m->top_cpu[nc++] = all[i];
+    }
+    m->ntop_cpu = nc;
 }
 
 /* ---------------- 网卡选择 ----------------

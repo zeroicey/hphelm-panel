@@ -301,34 +301,54 @@ static void parse_C(metrics_t *m, char *rest) {
     while (i < MAX_CORE) m->core_pct[i++] = 0;
 }
 
-/* P <nproc> <pid>:<rssMiB>:<name>,...
+/* P <nproc> <pid>:<rssMiB>:<cpu%>:<name>,...
+ * Q <pid>:<rssMiB>:<cpu%>:<name>,...
  * ⚠️ 按**逗号**分段，不按空格 —— 进程名里常有空格（"searxng worker"），
  *    按空格分会把一条记录劈成两半（实测：名字里混进了 pid 和内存数字）。
- *    探针那边也把名字里的空白替换成 `_`，两头都防。 */
-static void parse_P(metrics_t *m, char *rest) {
-    char *p = rest, *o;
-    if (!tok(&p, &o)) return;
-    m->nproc = (int)tlong(o);
-    m->ntop = 0;
-    char *seg = p;
+ *    探针那边也把名字里的空白替换成 `_`，两头都防。
+ * ⚠️ 记录字段数有两种：新探针 4 段（pid:rss:cpu:name）、老探针 3 段（pid:rss:name）。
+ *    靠"有没有第三个冒号"区分；老格式的 cpu% 记 0（宁可不显示，也不猜）。 */
+static int parse_proc_row(char *seg, proc_row_t *row) {
+    char *c1 = strchr(seg, ':');
+    if (!c1) return 0;
+    char *c2 = strchr(c1 + 1, ':');
+    if (!c2) return 0;
+    char *c3 = strchr(c2 + 1, ':');
+    *c1 = 0;
+    *c2 = 0;
+    row->pid = (int)tlong(seg);
+    row->rss_mb = tdouble(c1 + 1);
+    if (c3) {
+        *c3 = 0;
+        row->cpu_pct = tdouble(c2 + 1);
+        snprintf(row->name, sizeof row->name, "%s", c3 + 1);
+    } else {
+        row->cpu_pct = -1.0;   /* 老探针（3 段）没有 CPU 列 ⇒ 画 "-"，不要冒充 0.0% */
+        snprintf(row->name, sizeof row->name, "%s", c2 + 1);
+    }
+    return 1;
+}
+
+static void parse_list(char *rest, proc_row_t *dst, int *ndst) {
+    char *seg = rest;
+    *ndst = 0;
     while (*seg == ' ') seg++;
-    while (*seg && m->ntop < TOPN) {
+    while (*seg && *ndst < TOPN) {
         char *end = strchr(seg, ',');
         if (end) *end = 0;
-        char *c1 = strchr(seg, ':');
-        char *c2 = c1 ? strchr(c1 + 1, ':') : NULL;
-        if (c1 && c2) {
-            *c1 = 0;
-            *c2 = 0;
-            proc_row_t *row = &m->top[m->ntop++];
-            row->pid = (int)tlong(seg);
-            row->rss_mb = tdouble(c1 + 1);
-            snprintf(row->name, sizeof row->name, "%s", c2 + 1);
-        }
+        if (parse_proc_row(seg, &dst[*ndst])) (*ndst)++;
         if (!end) break;
         seg = end + 1;
     }
 }
+
+static void parse_P(metrics_t *m, char *rest) {
+    char *p = rest, *o;
+    if (tok(&p, &o)) m->nproc = (int)tlong(o);
+    parse_list(p, m->top, &m->ntop);
+}
+
+static void parse_Q(metrics_t *m, char *rest) { parse_list(rest, m->top_cpu, &m->ntop_cpu); }
 
 /* 返回 1 = 这一帧提交了 */
 static int commit(remote_t *r, double now) {
@@ -396,6 +416,7 @@ int remote_read(remote_t *r, double now) {
         if (line[0] == 'S' && line[1] == ' ') parse_S(&r->stg, line + 2);
         else if (line[0] == 'C' && line[1] == ' ') parse_C(&r->stg, line + 2);
         else if (line[0] == 'P' && line[1] == ' ') parse_P(&r->stg, line + 2);
+        else if (line[0] == 'Q' && line[1] == ' ') parse_Q(&r->stg, line + 2);
         else if (line[0] == 'E') {
             if (commit(r, now)) committed = 1;
         }

@@ -3,14 +3,17 @@
 > **现役形态（2026-11-03 起；2026-11-05 改名 `hphelm-panel` → `hpopi5b-panel`）**：跑在
 > **hpopi5b（Orange Pi 5 + DP 显示器 1920×1080）**上的**纯显示终端** —— `--kiosk`，无登录页、
 > 无桌面、不接键鼠；两幕（`panel` 运维看板 / `trending` GitHub 趋势）按 `--rotate` 轮换。
-> 源码工作副本在 **hpcmd `/data/dev/project/hpopi5b-panel`**，部署见 [`docs/deploy.md`](docs/deploy.md)。
+> 源码工作副本在 **hpcore `/home/happpy/work/project/hpopi5b-panel`**（`hpcmd` 已于 2026-11-06 下线），
+> 构建与部署在 `hpopi5b` 上做，见 [`docs/deploy.md`](docs/deploy.md)。
 > **历史形态（已随 `hphelm` 2026-10-27 重装而消失）**：下文「锁屏 / 登录页 / PAM 认证」描述的是
 > 工位机 `hphelm` 上的看板+自研锁屏；认证助手仍保留源码（`src/hpopi5b-auth.c`），但**生产不安装**。
 >
 > **English TL;DR** — A hand-drawn (no GUI toolkit) X11 **ops dashboard kiosk** for one display
 > terminal in my home fleet (`hpopi5b`, Orange Pi 5): ~3.0k lines of C over cairo + pango,
-> **~4.6% of one core**, ~18 MiB RSS, 1 thread, zero GUI toolkit dependencies. Two hosts side by side
-> (commander seat + production, pulled over a long-lived ssh pipe, nothing installed on the remote).
+> **~3.7% of one core** (measured A/B at a pinned 1.8 GHz; the Pi idles at 408 MHz, where the same
+> binary reads 5.8%), ~20 MiB RSS, 1 thread, zero GUI toolkit dependencies. **One** host — the
+> all-in-one `hpcore` — pulled over a long-lived ssh pipe with a read-only probe (nothing installed
+> on the remote), plus its 24 busiest processes.
 > Auto-rotating scenes (`panel` / `trending`); no login page in production.
 > ⚠️ **This is not a drop-in product.** It is *my* answer for *my* machine, wired into our fleet's
 > desktop stack and operational rules. Read [「这不是给谁用的」](#这不是给谁用的我为什么这么写)
@@ -39,18 +42,22 @@ PANEL ──idle≥sleep_off──▶ DPMS 关屏；任意输入唤醒
        └─ sleep_off ≤ 0 ⇒ **永不关屏**（默认，2026-10-19 起）
 ```
 
-面板是**三列**：`本机 │ 生产服务器 │ 进程榜`（用户口径：「进程排行榜只占一列」「一块屏幕上同时显示
-本机跟生产服务器」）。
+面板**只画一台机**：`hpcore（all-in-one）│ 进程榜`（用户口径 2026-11-06：「hpcmd 下线了，
+全显示 hpcore 相关东西，把空间占满，进程那一列可以全部给他了」）。
 
-- **两个主机列完全对称**（同一个 `draw_host()` 画两遍），**每块只占一行**（标题嵌在数值里）：
-  - CPU：使用率 · 温度 · 频率 · governor · load · 每核柱 · 5 分钟曲线
-  - 内存：使用率 · 已用/总量 · 可回收缓存 · swap · 5 分钟曲线
-  - 网络：↑↓ 速率 · 累计流量 · 丢包/错包 · 双曲线
-  - 磁盘：I/O 读/写速率 · 双曲线 · 使用率 · 剩余/总量 · 进度条（盘累计读写进脚注）
-  - 脚注：容器数 · 线程数 · **PSI 压力**（cpu / io）
-  - 纵向是流式的：四张曲线**均分剩余高度**，不浪费版面
-- **进程榜一列**：上段本机 12 条、下段生产 12 条（按 RSS 降序，每 3 秒刷新）
+- **主机区（左侧，约 56% 宽）是两个子列**，同一个 `draw_host()` 画，**每块只占一行**（标题嵌在数值里）：
+  - 左子列：CPU（使用率 · 温度 · 频率 · load · 每核柱 · 5 分钟曲线）、内存（使用率 · 已用/总量 ·
+    可回收缓存 · swap · 5 分钟曲线）
+  - 右子列：网络（↑↓ 速率 · 丢包/错包 · 双曲线）、磁盘 I/O（读/写速率 · 双曲线）、磁盘用量（使用率 ·
+    剩余/总量 · 条）、容器/线程/进程数、累计流量、PSI 压力
+  - 曲线区带 25/50/75% 极淡刻度线 + 右上角量程，底部一行说明时间跨度（近 5 分钟 · 1 Hz）
+- **进程榜整列归这一台机**（右侧，约 44% 宽）：上段 12 条按内存（RSS）、下段 12 条按 CPU，
+  每行带名次 · 名称 · pid · 内存 · CPU%
 - **生产服务器**：ssh 长连接 + 远端 `perl` 探针，**不在被监控机装任何东西**（见下）
+
+> 2026-11-06 之前是「本机 │ 生产 / 生产2 │ 进程榜」三列；hpcmd 下线后第二台机归零，
+> 双机列 + 三段曲线各占一块的版式会在每张曲线上方留下大片空白 —— 现在是一台机、四张更高的曲线、
+> 进程榜一整列（24 条）。
 
 ### 生产服务器监控（`--remote`）
 
@@ -71,7 +78,10 @@ hpopi5b-panel ──fork/exec──▶ ssh -T hpcore 'perl -'  ──▶ 被监�
 
 实测成本：远端 `perl` **~0.3% of one core**，本机 `ssh` 进程 <0.1%。
 配置写在 `/etc/hpopi5b-panel.conf`（`remote=hpcore`），优先级 `--remote` > `$HPOPI5B_REMOTE` > 该文件。
-**没配就没有右列**（面板会写「未配置」，不拿本机数据冒充）。
+**没配就画本机**（标题写「本机」，不拿别的机器的数据冒充）。
+
+> `remote2=` / `--remote2` 自 2026-11-06 起**已废弃**：仍被接受（老启动脚本不会炸），
+> 但只打一行提示、不再有第二个主机列。
 
 ## 为什么是「自己画」——这是实测选出来的，不是偏好
 
@@ -127,12 +137,13 @@ sudo make install    # → /usr/local/bin/hpopi5b-panel
                      # → /usr/local/libexec/hpopi5b-auth（4755 root:root，setuid）
 ```
 
-⚠️ **构建必须在目标机 `hphelm` 上做**（需要 X 开发头文件；无头机器上 `make` 会失败）。
-**2026-10-19 起源码目录与部署目录是同一个**：`/data/dev/hpopi5b-panel`，所以现在没有 rsync ——
-`tools/deploy.sh` 就在本机构建、安装、重启、跑判据。
+⚠️ **构建必须在 `hpopi5b` 上做**（需要 X 开发头文件；`hpcore` 这台源码机**没有 gcc/make**，
+`hpcmd` 时代的「本机构建 + `tools/deploy.sh`」已经不适用）。流程是：hpcore 源码 → scp 到 hpopi5b →
+`make panel` → `install` 二进制与探针 → `systemctl restart hpopi5b-kiosk`。
 
-部署到 `hphelm` 的完整流程（含红线守卫、三层回滚、六件绝不能做的事）见 **[`docs/deploy.md`](docs/deploy.md)**；
-一条命令的版本是 `tools/deploy.sh`（`--check` 只读）。
+部署到 `hpopi5b`（kiosk）的完整流程（含红线守卫、三层回滚、六件绝不能做的事）见 **[`docs/deploy.md`](docs/deploy.md)**；
+一条命令的版本是 `tools/deploy.sh`（`--check` 只读；它假定**在本机就地部署**，从 hpcore 推过去要走
+`docs/deploy.md` 的 scp 路径）。
 
 常用参数：
 
@@ -142,11 +153,11 @@ hpopi5b-panel --login-back 120     # 登录页空闲多久回面板（秒）
 hpopi5b-panel --input-grace 1.2    # 进面板后多久才接受唤醒（防误触）
 hpopi5b-panel --sleep-off 0       # 面板空闲多久关屏（DPMS）；**0 或负数 = 永不关屏（默认）**
 hpopi5b-panel --scale 1.48         # 缩放（物理/逻辑像素比）
-hpopi5b-panel --remote hpcore      # 生产服务器（ssh 目标）；空 = 只显示本机
+hpopi5b-panel --remote hpcore      # 被监控机（ssh 目标）；空 = 只画本机
 hpopi5b-panel --lock /tmp/x.lock   # 单实例锁路径（默认 /tmp/hpopi5b-panel.lock）
 hpopi5b-panel --state panel|login  # 强制初始状态（验证界面用）
 hpopi5b-panel --kiosk             # 纯显示器：永不进登录页/桌面（Pi 看板用）
-hpopi5b-panel --remote2 hpcore    # 第二台真机：替换 kiosk 下左列的「本机」
+hpopi5b-panel --remote2 hpcore    # ⚠️ 已废弃（2026-11-06 单机化）：接受但忽略，只打一行提示
 hpopi5b-panel --scene panel|trending  # 钉住一幕（不轮换）
 hpopi5b-panel --rotate 30         # 幕轮换间隔（秒）；0 = 不轮换（kiosk 默认 30，桌面默认 0）
 hpopi5b-panel --transition dip|cut  # 转场：dip=淡出淡入（默认）· cut=硬切（验版式用）
@@ -203,7 +214,7 @@ src/theme.h         配色（Catppuccin Mocha）+ 版式常量（逻辑像素）
 src/metrics.[ch]    本机数据采集：只读 /proc、/sys，不 fork 子进程
 src/remote.[ch]     生产服务器采集：ssh 长连接 + 非阻塞行解析 + 退避重连
 src/view.[ch]       绘制基元：文字/背景渐变/细线/进度条/每核柱/sparkline/量程量化
-src/view_panel.c    面板版面（无卡片、三列：本机 │ 生产 │ 进程榜）
+src/view_panel.c    面板版面（无卡片、主机区两子列 │ 进程榜整列）
 src/view_login.c    登录页版面（无卡片、居中）
 src/scene.h         幕的接口：draw + 自己的内容签名（不碰 X）
 src/scenes.c        幕的注册表 + 轮换调度 + 转场推进（纯逻辑）
@@ -214,7 +225,8 @@ systemd/        hpopi5b-trending.{service,timer}（每 3 小时同步一次榜�
 src/auth.[ch]       与 setuid 助手通信（密码只走 stdin）
 src/hpopi5b-auth.c   唯一的特权代码：setuid root，调 PAM 验一次密码
 src/panel.c         X11 窗口、事件、状态机、主循环、双缓冲
-tools/              渲染验证（render-ascii/render-region/measure）、帧差分探针、部署脚本、
+tools/              渲染验证（render-ascii/render-region/measure/pngcrop）、帧差分探针、
+                    窗口截图（xshot.c）、部署脚本、
                     probe-remote.pl（喂给被监控机的只读探针）
 docs/               架构 / 设计 / 验证 / 坑 / 部署
 ```

@@ -92,7 +92,7 @@ PANEL ──idle≥sleep_off(0=永不)──▶ DPMS 关屏；任意输入唤醒
 ```
 hpopi5b-panel ──fork/exec──▶ ssh -T <target> 'perl -'   ──▶ 被监控机的 perl
      ▲                         stdin = tools/probe-remote.pl（本地文件）
-     └─── 非阻塞 read(stdout) ── 1 Hz 的 S/C/P/E 行
+     └─── 非阻塞 read(stdout) ── 1 Hz 的 S/C/P/Q/E 行
 ```
 
 **探针输出契约**（改任何一边都要同时改另一边）：
@@ -101,8 +101,14 @@ hpopi5b-panel ──fork/exec──▶ ssh -T <target> 'perl -'   ──▶ 被�
 | --- | --- |
 | `S` | `ts host cpu% ncore uptime memT memU swapT swapU disk%:GB rx tx temp l1 l5 l15 freqMHz dock nproc gov iface ip` |
 | `C` | `core0% core1% …`（ncore 个） |
-| `P` | `nproc pid:rssMiB:name,pid:rssMiB:name,…`（每 3 秒，最多 24 条） |
+| `P` | `nproc pid:rssMiB:cpu%:name,…`（每帧，按 RSS 取 24 条） |
+| `Q` | `pid:rssMiB:cpu%:name,…`（每帧，按 CPU 取 24 条，≥2% 才进榜） |
 | `E` | 一帧结束 ⇒ **只有收到 E 才提交** |
+
+`P`/`Q` 的四个字段是 2026-11-06 起的新格式（进程榜整列归一台机后要按 CPU 排第二段）；
+面板这边按**冒号段数**兼容老的 3 字段格式（老探针没有 CPU% ⇒ 该列显示「-」，不显示假 0）。
+探针内部按 `pid → 上帧 utime+stime` 记忆差值算 CPU%（`USER_HZ` 恒 100、帧间隔 <1s 时不算），
+所以 `Q` 行是「上一帧到这一帧」的瞬时占用，不是平均值。
 
 **四条设计约束**：
 

@@ -23,6 +23,7 @@ typedef struct {
     int pid;
     char name[24];
     double rss_mb;
+    double cpu_pct;   /* 自上次采样以来的 CPU 占用（可为 100 以上：多线程进程） */
 } proc_row_t;
 
 /* ---- 一台主机的指标快照 ----
@@ -65,10 +66,12 @@ typedef struct {
     long net_err, net_drop;            /* 错误包 / 丢弃包累计 */
     char ts_ip[40];
     int ts_up;
-    /* 进程 */
+    /* 进程：两个榜（同一台机、两种排序）—— 面板右列上段「按内存」、下段「按 CPU」 */
     int nproc;
-    proc_row_t top[TOPN];
+    proc_row_t top[TOPN];      /* 按 RSS 降序 */
     int ntop;
+    proc_row_t top_cpu[TOPN];  /* 按 CPU% 降序 */
+    int ntop_cpu;
     /* 容器（-1 = 不知道 / 没有 docker） */
     int ndocker;
     /* 历史曲线 */

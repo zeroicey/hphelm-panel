@@ -371,6 +371,37 @@ void v_spark2(cairo_t *cr, double x, double y, double w, double h, const ring_t 
     spark_draw(cr, x, y, w, h, r2, c2, vmax, 0.14);
 }
 
+/* 曲线槽位的「刻度底」：25/50/75% 三条极淡 baseline + 右上角量程文字，返回实际量程。
+ *
+ * 为什么要有它（2026-11-06）：曲线被拉高到占满剩余空间后，CPU 3% 时线贴在最底下，
+ * 上面一大片什么都没有 —— 看起来像「图没画完」。加了刻度之后，同一块区域读作「一张图」，
+ * 空白变成「刻度之间的留白」。调用方把返回的 vmax 显式传给 v_spark/v_spark2，
+ * 保证网格和曲线共用同一个量程（否则网格 25% 和曲线 25% 不在一条线上）。
+ * is_pct=1 ⇒ 量程固定 100，刻度写 25%/50%/75%；否则按 v_nice_ceil 求值并用 v_fmt_rate。 */
+double v_chart_scale(cairo_t *cr, double x, double y, double w, double h, double vmax, int is_pct) {
+    if (h < 24.0) return vmax > 0 ? vmax : 1.0;   /* 太矮就别画刻度了，纯曲线 */
+    if (vmax <= 0) vmax = is_pct ? 100.0 : v_nice_ceil(1.0);
+    for (int i = 1; i <= 3; i++) {
+        double gy = y + h - h * (double)i / 4.0;
+        cairo_rectangle(cr, x, gy, w, 1.0);
+        v_set_rgb(cr, C_SURFACE1, i == 2 ? 0.24 : 0.42);
+        cairo_fill(cr);
+    }
+    char b[32];
+    if (is_pct) snprintf(b, sizeof b, "100%%");
+    else v_fmt_rate(vmax, b, sizeof b);
+    /* 量程文字垫一块背景色：不然曲线峰顶刚好冲到右上角时会像被划掉（2026-11-06 截图里就是这样） */
+    {
+        const double tw = v_text_w(v_fd_small(), b) + 6;
+        const double th = 15;
+        cairo_rectangle(cr, x + w - tw, y, tw, th);
+        v_set_rgb(cr, C_BG0, 0.50);
+        cairo_fill(cr);
+        v_text_right(cr, x + w - 3, y + 2, v_fd_small(), C_SURFACE1, "%s", b);
+    }
+    return vmax;
+}
+
 uint32_t v_temp_color(double t) {
     if (t < 0) return C_OVERLAY0;
     if (t < 70) return C_TEAL;

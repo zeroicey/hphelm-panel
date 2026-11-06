@@ -96,6 +96,9 @@ void v_spark2(cairo_t *cr, double x, double y, double w, double h, const ring_t 
               const ring_t *r2, uint32_t c2, double vmax);
 /* 把量程量化到 1/2/5×10ⁿ：**避免每来一个新高整条曲线就整体跳**（实测观感问题） */
 double v_nice_ceil(double v);
+/* 曲线槽位的刻度底（25/50/75% 三条细线 + 右上角量程），返回实际量程；
+ * 把返回值传给 v_spark/v_spark2，保证网格与曲线同量程。is_pct=1 ⇒ 量程固定 100。 */
+double v_chart_scale(cairo_t *cr, double x, double y, double w, double h, double vmax, int is_pct);
 uint32_t v_temp_color(double t);
 
 /* ---- 格式化 ---- */
@@ -104,12 +107,11 @@ void v_fmt_rate(double bps, char *out, size_t n);
 void v_fmt_uptime(double s, char *out, size_t n);
 
 /* ---- 两个视图 ---- */
-/* local = 本机；remote = 生产服务器（未配置时传 NULL）；feed = 远程采集状态 */
-/* 两列主机：左边一列可能是「本机」（lfeed->enabled=0）也可能是第二台远程机（enabled=1）；
- * 右边一列总是生产服务器（right/rfeed 为 NULL 则不画）。lrole/rrole 是列标题里的角色字。*/
-void view_panel_draw(cairo_t *cr, const view_ctx_t *v,
-                     const metrics_t *left, const view_feed_t *lfeed, const char *lrole,
-                     const metrics_t *right, const view_feed_t *rfeed, const char *rrole);
+/* 单主机面板（2026-11-06 单机化）：一台主机（两子列）+ 进程榜一列。
+ * m = 要显示的那台（远端或本机）；feed = 采集健康度（本机可传 enabled=0 的零值）；
+ * target = NULL ⇒ 标「本机/本地」，非 NULL ⇒ 标「生产服务器/远端」。 */
+void view_panel_draw(cairo_t *cr, const view_ctx_t *v, const metrics_t *m,
+                     const view_feed_t *feed, const char *target);
 void view_login_draw(cairo_t *cr, const view_ctx_t *v, const metrics_t *m, const char *user,
                      int pwlen, const char *err, int busy, int cursor_on, int wait_s);
 

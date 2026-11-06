@@ -28,8 +28,8 @@ typedef struct {
     double now;          /* CLOCK_MONOTONIC 秒 */
     time_t wall;         /* 墙上时间（Pi 无 RTC，可能没有 NTP 同步） */
     metrics_t *m;        /* 本机快照 */
-    remote_t *r, *r2;    /* --remote / --remote2（可能为 NULL 或 enabled=0） */
-    view_feed_t *feed, *feed2;
+    remote_t *r;         /* --remote（可为 NULL 或 enabled=0；未启用时面板显示本机） */
+    view_feed_t *feed;   /* 与 r 对应：扫描健康度 */
 } scene_env_t;
 
 typedef struct scene_s {

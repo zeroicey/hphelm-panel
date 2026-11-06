@@ -2,8 +2,8 @@
 
 > 你是这个项目的专职维护者。这份文件是你的操作手册：**先读它，再动手**。
 > 详细材料在 `docs/`；逐轮交接与当前待办在 `HANDOFF.md`；**项目记忆库在 `.ai/`**（见文末契约）。
-> 最后更新：**2026-11-05**（改名 `hphelm-panel` → `hpopi5b-panel` 并把项目归位到 `/data/dev/project/`）。
-> **现役形态**：源码工作副本 = **hpcmd `/data/dev/project/hpopi5b-panel`**（只改代码 + push，不在本机构建/部署）；
+> 最后更新：**2026-11-06**（hpcmd 下线 ⇒ 源码工作副本搬回 hpcore，面板单机化）。
+> **现役形态**：源码工作副本 = **hpcore `/home/happpy/work/project/hpopi5b-panel`**（本机没有 gcc/make ⇒ 只改代码 + push，构建/部署在 hpopi5b 上做）；
 > 运行机 = **hpopi5b**（Orange Pi 5，kiosk 纯显示终端）。下面 2026-10-21 的「本机原地部署 / lightdm / 锁屏」
 > 章节属于 hphelm 时代，**已失效**；部署以 `docs/deploy.md` 的「三十秒版」为准。
 
@@ -12,17 +12,21 @@
 ## 0. 三十秒上手
 
 ```sh
-cd /data/dev/project/hpopi5b-panel   # hpcmd 上的工作副本（源码 ≠ 部署机）
-make panel                          # 本机只做离屏验证；arm64 真机构建在 hpopi5b 上
+cd /home/happpy/work/project/hpopi5b-panel   # hpcore（本机）：只有源码，没有 gcc/make
 
-# 先在隔离环境看效果（不要一上来动真屏）
-Xvfb :9 -screen 0 1920x1080x24 -ac &
-DISPLAY=:9 ./hpopi5b-panel --state panel --lock /tmp/xv9.lock    # --lock 避免和真机实例抢锁
+# 同步到 hpopi5b 编译 + 离屏验证（本机编不了；Xvfb/截图都在 hpopi5b 上）
+tar --exclude=.git --exclude='*.o' -czf /tmp/s.tgz . && scp -q /tmp/s.tgz hpopi5b:/tmp/
+ssh hpopi5b 'cd /tmp/panelb && tar -xzf /tmp/s.tgz && make panel'
+ssh hpopi5b 'cd /tmp/panelb && DISPLAY=:9 ./hpopi5b-panel --kiosk --scale 1.48 \
+  --remote hpcore --scene panel --lock /tmp/x99.lock'     # 先起 Xvfb :9，别动真屏
 
-# 更新系统屏保（构建 → 备份旧二进制 → 安装 → 重启 → 判据，一条命令）
-tools/deploy.sh --check     # 只看会做什么（只读）
-tools/deploy.sh             # 真的部署；桌面会露出 1~2 秒，正常
+# 装到真屏（判据见 docs/deploy.md「三十秒版」）
+ssh hpopi5b 'install -m755 /tmp/panelb/hpopi5b-panel /usr/local/lib/hpopi5b-panel/hpopi5b-panel \
+  && install -m644 /tmp/panelb/tools/probe-remote.pl /usr/local/share/hpopi5b-panel/probe-remote.pl \
+  && systemctl restart hpopi5b-kiosk'
 ```
+
+⚠️ `tools/deploy.sh` 是 hphelm 时代「本机原地部署」，**在 hpcore / hpopi5b 上都不要跑**。
 
 ⚠️ **`tools/deploy.sh` 必须在本机跑**：2026-10-19 起源码与部署目录合一，没有 rsync、不 ssh 自己。
 旧的 `ssh hphelm 'make …'` 写法**必然失败**（本机 `~/.ssh/config` 没有 `hphelm` 这个 Host）。
@@ -94,8 +98,9 @@ README 的「这不是给谁用的」那张表就是**设计边界**——不要
 ```
 ① 读 HANDOFF.md 第四节（当前候选） + docs/design.md（如果要动 UI）
 ② 在 Xvfb 里改到满意（--lock 隔离，别动真机）
-③ 用 docs/verify.md 的方法量像素（我看不到图，这是唯一可信手段）
-④ 真机：`tools/deploy.sh`（本机；构建+备份+安装+重启+判据一把过。桌面露出 1~2 秒，正常）
+③ 用 docs/verify.md 的方法量像素 / 截图取证（`tools/xshot.c` 是本轮新写的纯 X11 截图器）
+④ 真机：scp 到 hpopi5b → `make panel` → `install` 二进制 + 探针 → `systemctl restart hpopi5b-kiosk`
+   （见第 0 节与 `docs/deploy.md`「三十秒版」；屏幕抖一下是正常的）
 ⑤ 真机判据全过（见第 4 节）
 ⑥ 文档：HANDOFF.md 记本轮 + README/docs 同步 + git commit
 ⑦ 机队事实有变（部署位置/服务名/红线）⇒ 提醒维护 kb 的人更新 `kb/runbooks/hphelm.md`
@@ -104,12 +109,15 @@ README 的「这不是给谁用的」那张表就是**设计边界**——不要
 **改 UI 的第一原则：先量后改。** 不要凭想象改版式——用 `tools/render-ascii.py` 看整屏、
 `tools/render-region.py` 看局部、`tools/measure.py` 量几何（柱宽/间距/对齐/行距）。
 
+⚠️ 这三个 python 工具都依赖 **ImageMagick（`magick`）**，`hpopi5b` 上没有装 ⇒ 当前链路上**用不了**。
+替代：`tools/xshot.c`（`cc -O2 -o xshot tools/xshot.c $(pkg-config --cflags --libs x11 cairo)`）
+把窗口直接拷成 PNG，再靠 `LAYOUT_DEBUG=1` 打出的 `wa/ch/FIX_*/余` 与代码里的常量对账。
+
 ---
 
 ## 4. 验收判据（**每轮都必须跑，缺一项不算完**）
 
-**先跑一条命令**：`tools/deploy.sh`（它把下面 ①③④ 串起来并按项目口径判定；`--check` 只看）。
-它跑不了时（或你要单跑某项）用下列命令：
+（`tools/deploy.sh` 是 hphelm 时代的本机原地部署，**在这里跑不了**；下面逐项跑。）
 
 ```sh
 # ① 不闪：抓窗口连续帧，>30% 像素变化的帧必须是 0（kiosk 每 30s 换幕那 2 帧除外）
@@ -117,8 +125,11 @@ DISPLAY=:0 tools/probe-frames 60
 # ② 主循环正常：2 it/s、poll 全是超时、事件 0
 HPOPI5B_PANEL_DEBUG=1 ./hpopi5b-panel --state panel --lock /tmp/x.lock   # 每秒一行
 # ③ CPU：读 /proc/<pid>/stat 的 utime+stime（jiffies × 10ms / 窗口 ms）
-# ④ 红线没被碰：VT 还在 tty7、没有 greeter、单实例
-cat /sys/class/tty/tty0/active          # 期望 tty7
+#    ⛔ 只做 A/B（旧二进制留在 …/hpopi5b-panel.prev），并先固定频率：
+#    echo performance > /sys/devices/system/cpu/cpufreq/policy0/scaling_governor
+#    （ondemand 空载 408MHz，同一份代码量出 5.8%；1.8GHz 下 3.7%。详见 docs/verify.md 五节）
+# ④ 红线没被碰：VT 还在 tty1、没有 greeter、单实例
+cat /sys/class/tty/tty0/active          # 期望 tty1（hpopi5b 的 xinit 就是 Xorg :0 vt1；hphelm 时代是 tty7）
 pgrep -cx slick-greeter                 # 期望 0
 pgrep -cx hpopi5b-panel                  # 期望 1
 # ⑤ 几何（改 UI 时）：量柱宽/间距/对齐/行距，与设计值逐位对
@@ -149,14 +160,16 @@ python3 tools/measure.py assets/panel.png --runs 240 --bands
 | --- | --- | --- |
 | `src/theme.h` | 语义色宏 + 版式常量（逻辑像素）+ 字号 | ⭐ 最常动 |
 | `src/theme.c` | 白天/夜间两套调色板 + 固定时刻判定 | ⭐ 加主题只动这里 |
-| `src/view_panel.c` | 面板版面（三栏 + 进程榜） | ⭐⭐ 改面板只动这里 |
+| `src/view_panel.c` | 面板版面（主机区两子列 + 进程榜整列） | ⭐⭐ 改面板只动这里 |
 | `src/scene.h` · `src/scenes.c` | 幕的接口（draw + 自身内容签名）与轮换/转场调度 | ⭐ 改调度只动这里 |
 | `src/scene_*.c` | 两个幕：panel / trending（两列榜单） | ⭐⭐ 加幕就新建一个文件 |
 | `src/view_login.c` | 登录页版面 | ⭐ 改登录页时 |
 | `src/view.c` | 绘制基元（文字/渐变/细线/条/每核柱/sparkline/量程） | 偶尔 |
 | `src/metrics.c` | **本机**数据采集（`/proc`、`/sys`，不 fork） | 加指标时 |
 | `src/remote.[ch]` | **生产服务器**采集（ssh 长连接 + 非阻塞解析 + 退避重连） | 改远端协议时 |
-| `tools/probe-remote.pl` | 喂给被监控机的**只读**探针（从 stdin 进，不落盘到对方） | 加远端指标时 |
+| `tools/probe-remote.pl` | 喂给被监控机的**只读**探针（从 stdin 进，不落盘到对方）；`P`=按内存榜、`Q`=按 CPU 榜 | 加远端指标时 |
+| `tools/xshot.c` | 纯 X11 窗口截图 → PNG（零依赖；hpopi5b 上没有 magick 时的取证手段） | 偶尔 |
+| `tools/pngcrop.py` | 纯标准库 PNG 裁切/放大/单行游程（补 magick 缺席，量像素用） | 偶尔 |
 | `src/panel.c` | X11 窗口、事件、状态机、主循环、双缓冲、幕渲染入口、仪表 | 改交互时 |
 | `src/auth.c` + `src/hpopi5b-auth.c` | 认证（助手是唯一的特权代码，~120 行） | 一般不动 |
 
@@ -196,11 +209,12 @@ python3 tools/measure.py assets/panel.png --runs 240 --bands
 
 | 项 | 值 |
 | --- | --- |
-| 源码（权威）= 部署目录 | **`hphelm:/data/dev/hpopi5b-panel`**（同一份，2026-10-19 起） |
-| 本机 | `hphelm`（GMKtec G10）· Arch + X11 + lightdm(autologin) + bspwm + picom |
+| 源码（权威） | **`hpcore:/home/happpy/work/project/hpopi5b-panel`**（本机；2026-11-06 hpcmd 下线后搬回） |
+| 构建 + 运行机 | **`hpopi5b`**（Orange Pi 5，arm64 kiosk，纯显示终端）· 构建目录 `/tmp/panelb`（离屏）· 部署目录 `/usr/local/lib/hpopi5b-panel` |
+| 本机 | `hpcore`（x86 all-in-one：docker + 各种服务）· Arch · **无 gcc/make/pkg-config/Xvfb** |
 | 公开镜像 | `github.com/zeroicey/hpopi5b-panel`（`origin`，public，无 license） |
-| 推代码 | ⚠️ **hphelm 的 GitHub 身份只够推 `dotfiles`**（deploy key 一仓一把）⇒ 从本机 `git push` 会权限失败。提交在本地做；推送要么等有账号级密钥的机器，要么给本仓加一把 write deploy key（未做） |
-| 二进制 | `/usr/local/bin/hpopi5b-panel` + `/usr/local/libexec/hpopi5b-auth`（4755 root:root） |
+| 推代码 | ✅ `hpcore` 上有 `gh` 登录态（账号 `zeroicey`，https）⇒ 提交与 `git push` 在本机做即可（hphelm/hpcmd 时代的「推不上去」已不适用） |
+| 二进制 | hpopi5b：`/usr/local/lib/hpopi5b-panel/hpopi5b-panel` + `.../hpopi5b-auth`（4755 root:root）· 探针 `.../share/hpopi5b-panel/probe-remote.pl` |
 | 上一版二进制 | `/usr/local/bin/hpopi5b-panel.prev`（`deploy.sh` 内容不同时自动留） |
 | 会话入口 | `/usr/local/bin/hphelm-session`（守护循环 + 日志轮转） |
 | 运行日志 | `/tmp/hpopi5b-panel.log`（会话启动时按大小轮转） |

@@ -13,14 +13,20 @@
 | `tools/render-ascii.py` | 整屏压成 ASCII（亮度字符 + `C`=彩色） | 一眼看出「哪块空、哪块叠、哪块越界」 |
 | `tools/render-region.py` | 局部放大（可 1px 一格） | 看某控件形状/对齐是否合理 |
 | `tools/measure.py` | **量几何**：色块游程 / 墨迹带 / 颜色 bbox | 柱宽 88px、间距 5px、行距 57.6px |
+| `tools/pngcrop.py` | 纯标准库的裁切/放大/游程（**不需要 magick**，看单行颜色分段用） | 分隔线 x=1092、某行色块分段 |
 | `tools/probe-frames` | **抓连续帧做逐像素差分** | 「有无半成品帧」= 「有没有闪」 |
 
 ```sh
 python3 tools/render-ascii.py   assets/panel.png 22 22
 python3 tools/render-region.py  assets/panel.png 1360 80 1900 430 10
 python3 tools/measure.py        assets/panel.png --runs 240 --bands
+python3 tools/pngcrop.py        assets/panel.png out.png --crop 400,470,200,120 --zoom 5
+python3 tools/pngcrop.py        assets/panel.png --runs 300 --minrun 3
 DISPLAY=:0 tools/probe-frames   60
 ```
+
+⚠️ 前三个依赖 **ImageMagick**（`magick`）；hpopi5b 上没装 ⇒ 在真机链路上跑不了。
+替代：`tools/xshot` 抓图（纯 X11，见第 6 节）+ `tools/pngcrop.py`（纯标准库）+ `LAYOUT_DEBUG=1` 打印的几何。
 
 ---
 
@@ -124,7 +130,16 @@ hz=$(getconf CLK_TCK); d=($u2+$s2)-($u1+$s1)
 print('%.2f%% of one core' % (d*1000.0/hz/20000*100))"
 ```
 
-期望：**< 1%**（现状 0.60%）。
+期望：**< 1%**（最早在 hphelm 上量到 0.60%）。
+
+⛔ **这个数字在 hpopi5b 上量不出来，也别拿它当回归门槛**（2026-11-06 实测）：
+Pi 的 cpufreq 是 `ondemand`，空载时 CPU 跑在 **408 MHz**（最低档），同样的绘制工作
+按 CPU-秒算就贵 ~5 倍；机器忙（频率被顶到 1.8 GHz）时同一份二进制反而只有 2.9%。
+⇒ **只能 A/B 比**：把旧二进制留在 `/usr/local/lib/hpopi5b-panel/hpopi5b-panel.prev`，
+`echo performance > /sys/devices/system/cpu/cpufreq/policy0/scaling_governor` 固定频率后
+先量旧版、再量新版（各 60 秒、留 15 秒预热），**同一个窗口里差值才有意义**。
+2026-11-06 的实测（1.8 GHz 固定、真屏 `:0`）：旧三列 **3.47%** → 新单机 **3.68%**。
+量完记得 `echo ondemand > …` 改回去。
 
 内存：`grep -E '^(Pss|Pss_Anon)' /proc/$P/smaps_rollup` ⇒ Pss_Anon ≈ 5.4 MiB（PSS 总量会到 25 MiB，
 那大部分是 X/picom/pango 的**共享库页**，不是我们的）。
@@ -140,10 +155,11 @@ print('%.2f%% of one core' % (d*1000.0/hz/20000*100))"
 ## 六、判据五：红线没被碰（**每轮必跑，10 秒）**
 
 ```sh
-cat /sys/class/tty/tty0/active     # tty7（不是 tty8！tty8 = greeter 抢了 VT）
+cat /sys/class/tty/tty0/active     # hpopi5b = **tty1**（kiosk 的 xinit 就是 `Xorg :0 vt1 -keeptty`）；
+                                  # hphelm 时代的 tty7 是历史值；greeter 抢 VT 时会是 tty8
 pgrep -cx slick-greeter            # 0
 pgrep -cx hpopi5b-panel             # 1（多了 ⇒ 单实例锁失效）
-md5sum hpopi5b-panel /usr/local/bin/hpopi5b-panel   # 一致 ⇒ 装的是新二进制
+sha256sum /tmp/panelb/hpopi5b-panel /usr/local/lib/hpopi5b-panel/hpopi5b-panel  # 一致 ⇒ 装的是刚构建的那个
 tail -5 /tmp/hpopi5b-panel.log      # 没有「关屏兜底」「连续 3 次」等兜底痕迹
 ```
 

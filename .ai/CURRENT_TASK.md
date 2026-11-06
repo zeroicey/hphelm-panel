@@ -2,7 +2,7 @@
 
 <!-- The single live surface. Keep it under ~60 lines: it is read on every session start. -->
 
-**Status:** 🟢 第十三轮已真机验收并部署（单机化 + 空间占满 + 进程榜整列给 hpcore）· **Updated:** 2026-11-06
+**Status:** 🟢 第十三轮已真机验收、部署、提交并推送（单机化 + 空间占满 + 进程榜整列给 hpcore）· **Updated:** 2026-11-06
 
 ## Goal
 
@@ -13,16 +13,17 @@
 ## Checklist
 
 - [x] **第十三轮真机验收 + 部署**（0 warning、装二进制 + 探针、`systemctl restart`、取证数字见 Code state）
+- [x] 提交 `17b8a4e` 并推送 `origin/main`
 - [ ] `--rotate` 最终值仍没定（候选 25/30/45）
 - [ ] `tools/deploy.sh` 支持 hpopi5b 落点（现在仍指向 hphelm 的 `/usr/local/bin`）
 - [ ] CPU 预算收口（见 Blockers —— 数字口径已经变了，要先重定「预算怎么量」）
 - [ ] 容器**健康**（重启循环/备份/证书）：happpy 不在 docker 组 ⇒ 现在只能数个数
-- [ ] `tools/render-ascii.py` / `measure.py` 依赖 ImageMagick，hpopi5b 上没有 ⇒ 像素核对链路残缺
-      （暂时用 `tools/xshot.c` 截图 + 目测）
+- [ ] `tools/render-ascii.py` / `measure.py` 依赖 ImageMagick，hpopi5b 上没有 ⇒ 整屏 ASCII 与 `--bands` 仍不可用
+      （已补 `tools/xshot.c` 截图 + `tools/pngcrop.py` 裁切/单行游程，够量分隔线与局部；整屏视图仍缺）
 
 ## Code state
 
-`main` · 第十三轮已部署到 hpopi5b（提交见 `git log`）。
+`main` @ `17b8a4e`（已推 origin）· 第十三轮已部署到 hpopi5b。
 现场（2026-11-06 16:2x）：`hpopi5b-kiosk` active · `pgrep -cx hpopi5b-panel` = 1 · **tty1** active ·
 slick-greeter 0 · 无 X 错误 · 二进制与 `/tmp/panelb` 构建产物 sha256 一致。
 判据：`probe-frames 60` ⇒ **>30% 变化帧 0**；`LAYOUT_DEBUG=1` ⇒ `wa=336.2 ch=219.4 FIX_A=187 FIX_B=187 余=0.0`；
